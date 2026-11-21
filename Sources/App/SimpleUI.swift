@@ -94,7 +94,7 @@ struct UnitChip: View {
                 .transition(.asymmetric(insertion: .move(edge: direction).combined(with: .opacity),
                                         removal: .move(edge: direction == .bottom ? .top : .bottom).combined(with: .opacity)))
             Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 9, weight: .bold))
+                .font(.caption2.weight(.bold))
                 .foregroundStyle(.secondary)
         }
         .frame(minWidth: 52, minHeight: 32)
@@ -208,6 +208,17 @@ struct DiscardChangesButton: View {
         .confirmationDialog("Discard your changes?", isPresented: $asking, titleVisibility: .visible) {
             Button("Discard Changes", role: .destructive, action: onDiscard)
             Button("Keep Editing", role: .cancel) {}
+        }
+    }
+}
+
+/// With Reduce Motion on (Settings › Accessibility › Motion), changes appear without animation.
+struct RespectsReduceMotion: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.transaction { t in
+            if reduceMotion { t.animation = nil }
         }
     }
 }

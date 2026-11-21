@@ -57,7 +57,8 @@ struct RunLiveCard: View {
 
     private func number(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
-            Text(value).font(.system(size: 28, weight: .bold, design: .rounded)).monospacedDigit()
+            Text(value).font(.system(.title, design: .rounded, weight: .bold)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.6)
             Text(label).font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)

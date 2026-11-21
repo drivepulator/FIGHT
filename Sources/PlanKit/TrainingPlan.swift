@@ -13,6 +13,15 @@ struct ZoneTarget: Codable, Equatable, Hashable {
         self.highZone = min(max(highZone, self.lowZone), 5)
     }
 
+    /// Decoded values go through the same clamping (zones outside 1–5 would index past the zone table).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(lowZone: (try? c.decode(Int.self, forKey: .lowZone)) ?? 1,
+                  highZone: (try? c.decode(Int.self, forKey: .highZone)) ?? 5)
+    }
+
+    private enum CodingKeys: String, CodingKey { case lowZone, highZone }
+
     var label: String {
         lowZone == highZone ? "Zone \(lowZone)" : "Zones \(lowZone)–\(highZone)"
     }
@@ -103,7 +112,12 @@ struct PlanBlock: Codable, Identifiable, Equatable, Hashable {
 
     /// Planned length in seconds.
     var plannedSeconds: Int {
-        kind.isRoundBased ? rounds * workSeconds + max(0, rounds - 1) * restSeconds : durationSeconds
+        guard kind.isRoundBased else { return durationSeconds }
+        // Saturating maths: never traps, whatever the numbers.
+        let (work, o1) = rounds.multipliedReportingOverflow(by: workSeconds)
+        let (rest, o2) = max(0, rounds - 1).multipliedReportingOverflow(by: restSeconds)
+        let (sum, o3) = work.addingReportingOverflow(rest)
+        return o1 || o2 || o3 ? Int.max / 4 : sum
     }
 
     /// Short human summary, e.g. "3 × 3:00 / 1:00" or "2:00".
@@ -143,21 +157,56 @@ struct PlanBlock: Codable, Identifiable, Equatable, Hashable {
         let d = PlanBlock(kind: decodedKind)
         kind = decodedKind
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
-        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? d.title
-        rounds = (try? c.decodeIfPresent(Int.self, forKey: .rounds)) ?? d.rounds
-        workSeconds = (try? c.decodeIfPresent(Int.self, forKey: .workSeconds)) ?? d.workSeconds
-        restSeconds = (try? c.decodeIfPresent(Int.self, forKey: .restSeconds)) ?? d.restSeconds
-        durationSeconds = (try? c.decodeIfPresent(Int.self, forKey: .durationSeconds)) ?? d.durationSeconds
-        combos = (try? c.decodeIfPresent([[Strike]].self, forKey: .combos)) ?? []
+        // Plans arrive from links, QR codes and files made by other people: every value is
+        // clamped to a sensible range so a broken or hostile plan can't crash or stall a session.
+        func int(_ key: CodingKeys, _ fallback: Int, _ range: ClosedRange<Int>) -> Int {
+            let v = (try? c.decodeIfPresent(Int.self, forKey: key)) ?? fallback
+            return min(max(v, range.lowerBound), range.upperBound)
+        }
+        title = String(((try? c.decodeIfPresent(String.self, forKey: .title)) ?? d.title).prefix(Limits.title))
+        rounds = int(.rounds, d.rounds, Limits.rounds)
+        workSeconds = int(.workSeconds, d.workSeconds, Limits.workSeconds)
+        restSeconds = int(.restSeconds, d.restSeconds, Limits.restSeconds)
+        durationSeconds = int(.durationSeconds, d.durationSeconds, Limits.durationSeconds)
+        combos = ((try? c.decodeIfPresent([[Strike]].self, forKey: .combos)) ?? [])
+            .prefix(Limits.combos).map { Array($0.prefix(Limits.comboLength)) }.filter { !$0.isEmpty }
         tempo = (try? c.decodeIfPresent(BagTempo.self, forKey: .tempo)) ?? d.tempo
         target = try? c.decodeIfPresent(ZoneTarget.self, forKey: .target)
-        sets = (try? c.decodeIfPresent(Int.self, forKey: .sets)) ?? d.sets
-        reps = (try? c.decodeIfPresent(Int.self, forKey: .reps)) ?? d.reps
-        cue = (try? c.decodeIfPresent(String.self, forKey: .cue)) ?? ""
-        videoURL = try? c.decodeIfPresent(String.self, forKey: .videoURL)
-        calls = (try? c.decodeIfPresent([String].self, forKey: .calls)) ?? []
+        sets = int(.sets, d.sets, Limits.sets)
+        reps = int(.reps, d.reps, Limits.reps)
+        cue = String(((try? c.decodeIfPresent(String.self, forKey: .cue)) ?? "").prefix(Limits.cue))
+        videoURL = PlanBlock.safeVideoURL((try? c.decodeIfPresent(String.self, forKey: .videoURL)) ?? nil)
+        calls = ((try? c.decodeIfPresent([String].self, forKey: .calls)) ?? [])
+            .prefix(Limits.calls).map { String($0.prefix(Limits.callLength)) }.filter { !$0.isEmpty }
         untilRecovered = (try? c.decodeIfPresent(Bool.self, forKey: .untilRecovered)) ?? false
-        contacts = (try? c.decodeIfPresent(Int.self, forKey: .contacts)) ?? 0
+        contacts = int(.contacts, 0, Limits.contacts)
+    }
+
+    /// Ranges every plan block is held to.
+    enum Limits {
+        static let rounds = 1...50
+        static let workSeconds = 5...3600
+        static let restSeconds = 0...1800
+        static let durationSeconds = 5...14_400
+        static let sets = 1...30
+        static let reps = 1...500
+        static let contacts = 0...1000
+        static let title = 80
+        static let cue = 500
+        static let combos = 60
+        static let comboLength = 10
+        static let calls = 16
+        static let callLength = 24
+        static let blocks = 80
+    }
+
+    /// Technique videos must be plain web links (https, with a host). Anything else (phone numbers,
+    /// messages, links into other apps) is dropped.
+    static func safeVideoURL(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), raw.count <= 500,
+              let url = URL(string: raw), url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty else { return nil }
+        return url.absoluteString
     }
 }
 
@@ -183,7 +232,10 @@ struct TrainingPlan: Codable, Identifiable, Equatable, Hashable {
     }
 
     var plannedSeconds: Int {
-        blocks.reduce(0) { $0 + $1.plannedSeconds }
+        blocks.reduce(0) { total, b in
+            let (sum, overflow) = total.addingReportingOverflow(b.plannedSeconds)
+            return overflow ? Int.max / 4 : min(sum, Int.max / 4)
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -194,12 +246,12 @@ struct TrainingPlan: Codable, Identifiable, Equatable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = (try? c.decodeIfPresent(Int.self, forKey: .schemaVersion)) ?? 1
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
-        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? "Training plan"
-        author = (try? c.decodeIfPresent(String.self, forKey: .author)) ?? ""
-        discipline = (try? c.decodeIfPresent(String.self, forKey: .discipline)) ?? "Kickboxing"
-        notes = (try? c.decodeIfPresent(String.self, forKey: .notes)) ?? ""
+        title = String(((try? c.decodeIfPresent(String.self, forKey: .title)) ?? "Training plan").prefix(80))
+        author = String(((try? c.decodeIfPresent(String.self, forKey: .author)) ?? "").prefix(60))
+        discipline = String(((try? c.decodeIfPresent(String.self, forKey: .discipline)) ?? "Kickboxing").prefix(40))
+        notes = String(((try? c.decodeIfPresent(String.self, forKey: .notes)) ?? "").prefix(2000))
         createdAt = (try? c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
-        blocks = (try? c.decodeIfPresent([PlanBlock].self, forKey: .blocks)) ?? []
+        blocks = Array(((try? c.decodeIfPresent([PlanBlock].self, forKey: .blocks)) ?? []).prefix(PlanBlock.Limits.blocks))
     }
 
     /// A fresh copy (new IDs) for editing or importing someone else's plan.

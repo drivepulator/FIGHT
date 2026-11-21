@@ -47,6 +47,7 @@ struct FightApp: App {
                 WeeklyNudge.install()
                 session.bind(ble: bleManager, store: workoutStore, health: healthKit)
                 workoutStore.refreshCoach()
+                if !session.isRecording { WorkoutSession.endLeftoverActivities() }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { workoutStore.flushPendingSaves() }
@@ -70,6 +71,15 @@ struct FightApp: App {
             } message: {
                 Text(navigation.importError ?? "")
             }
+            .alert("Some data couldn't be read", isPresented: Binding(
+                get: { !workoutStore.storageWarnings.isEmpty },
+                set: { if !$0 { workoutStore.storageWarnings.removeAll() } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(workoutStore.storageWarnings.joined(separator: "\n\n"))
+            }
+            .modifier(RespectsReduceMotion())
             .preferredColorScheme(.dark)
         }
     }

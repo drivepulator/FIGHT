@@ -191,16 +191,76 @@ final class WorkoutStore: ObservableObject {
         var deleted: [DeletedProfile]?
     }
 
+    /// Same file, read one fighter at a time so one damaged entry doesn't lose the rest.
+    private struct LossyProfileContainer: Decodable {
+        var activeProfileID: UUID?
+        var profiles: [Lossy<AthleteProfile>]
+        var deleted: [Lossy<DeletedProfile>]?
+    }
+
+    // MARK: Damaged files
+
+    /// Plain-language notes about files that couldn't be read fully. Shown once, then cleared.
+    @Published var storageWarnings: [String] = []
+
+    /// Copies a file that couldn't be read aside (next to it, as name.damaged-<date>.ext) before
+    /// anything is written over it, and tells the fighter. Nothing is ever lost silently.
+    private func keepDamagedCopy(of url: URL, what: String, partly: Bool) {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let copy = url.deletingPathExtension()
+            .appendingPathExtension("damaged-\(stamp)")
+            .appendingPathExtension(url.pathExtension)
+        try? FileManager.default.copyItem(at: url, to: copy)
+        let folder = url.deletingLastPathComponent().lastPathComponent
+        let place = folder == "Documents" ? "Files › FIGHT" : "Files › FIGHT › \(folder)"
+        storageWarnings.append(partly
+            ? "Some of your \(what) couldn't be read and were skipped. The original file was kept as \(copy.lastPathComponent) in \(place)."
+            : "Your \(what) couldn't be read. The original file was kept as \(copy.lastPathComponent) in \(place), so nothing has been deleted.")
+    }
+
+    /// Reads a list file record by record. Records that can't be read are skipped, and if any
+    /// are, the original file is copied aside first. Returns nil when there's no file yet.
+    private func loadList<T: Decodable>(_ type: T.Type, from url: URL, decoder: JSONDecoder, what: String) -> [T]? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard let data = try? Data(contentsOf: url) else {
+            keepDamagedCopy(of: url, what: what, partly: false)
+            return []
+        }
+        if let all = try? decoder.decode([T].self, from: data) { return all }
+        if let lossy = try? decoder.decode([Lossy<T>].self, from: data) {
+            let good = lossy.compactMap(\.value)
+            keepDamagedCopy(of: url, what: what, partly: !good.isEmpty)
+            return good
+        }
+        keepDamagedCopy(of: url, what: what, partly: false)
+        return []
+    }
+
     private func loadProfilesFromDisk() {
         let decoder = JSONDecoder()
 
-        if let data = try? Data(contentsOf: profilesFileURL),
-           let container = try? decoder.decode(ProfileContainer.self, from: data),
+        let exists = FileManager.default.fileExists(atPath: profilesFileURL.path)
+        let data = try? Data(contentsOf: profilesFileURL)
+        if let data, let container = try? decoder.decode(ProfileContainer.self, from: data),
            !container.profiles.isEmpty {
             self.profiles = container.profiles
             self.activeProfileID = container.activeProfileID
             self.deletedProfiles = container.deleted ?? []
             return
+        }
+        // Damaged file: save every fighter that can still be read, and keep the original.
+        if exists {
+            let lossy = data.flatMap { try? decoder.decode(LossyProfileContainer.self, from: $0) }
+            let good = lossy?.profiles.compactMap(\.value) ?? []
+            keepDamagedCopy(of: profilesFileURL, what: "fighter profiles", partly: !good.isEmpty)
+            if !good.isEmpty {
+                self.profiles = good
+                let wanted = lossy?.activeProfileID
+                self.activeProfileID = good.contains { $0.id == wanted } ? wanted! : good[0].id
+                self.deletedProfiles = lossy?.deleted?.compactMap(\.value) ?? []
+                saveProfilesToDisk()
+                return
+            }
         }
 
         let defaultFighter = AthleteProfile()
@@ -337,27 +397,43 @@ final class WorkoutStore: ObservableObject {
         decoder.dateDecodingStrategy = .iso8601
 
         var loaded: [SavedWorkout] = []
+        var unreadable = 0
         for file in files where file.pathExtension == "json" {
             if let data = try? Data(contentsOf: file),
                let workout = try? decoder.decode(SavedWorkout.self, from: data) {
                 loaded.append(workout)
+            } else {
+                // Moved (never deleted) into Workouts/Unreadable so it's only reported once.
+                unreadable += 1
+                let dir = workoutsDirectory.appendingPathComponent("Unreadable", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try? FileManager.default.moveItem(at: file, to: dir.appendingPathComponent(file.lastPathComponent))
             }
+        }
+        if unreadable > 0 {
+            // The files stay where they are (nothing is overwritten); just say so.
+            storageWarnings.append("\(unreadable) session\(unreadable == 1 ? "" : "s") couldn't be read and \(unreadable == 1 ? "isn't" : "aren't") shown. The file\(unreadable == 1 ? " was" : "s were") kept in Files › FIGHT › Workouts › Unreadable.")
         }
         workouts = loaded.filter { $0.deletedAt == nil }.sorted { $0.startDate > $1.startDate }
         trash = loaded.filter { $0.deletedAt != nil }.sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }
     }
 
-    func save(_ workout: SavedWorkout) {
+    /// Saves a session. Returns false if it couldn't be written (e.g. the phone is full); the
+    /// caller then keeps its crash-safety copy so nothing is lost.
+    @discardableResult
+    func save(_ workout: SavedWorkout) -> Bool {
         var w = workout
         let age = Date().timeIntervalSince(w.startDate)
         if age >= archiveThresholdDays && !w.samples.isEmpty {
             w = compressWorkoutSamples(w)
         }
-        writeWorkoutMetadata(w)
+        let written = writeWorkoutMetadata(w)
+        if !written { w = workout }   // keep the heart rate in memory, inside the session
         workouts.removeAll { $0.id == w.id }
         workouts.insert(w, at: 0)
         workouts.sort { $0.startDate > $1.startDate }
         refreshGhostCache()
+        return written
     }
 
     /// Stores the athlete's post-session effort rating (enables session-RPE load).
@@ -527,7 +603,11 @@ final class WorkoutStore: ObservableObject {
         }
         let archiveName = "\(workout.id.uuidString).fpk"
         let archiveURL = archivesDirectory.appendingPathComponent(archiveName)
-        try? compressed.write(to: archiveURL, options: .atomic)
+        do {
+            try compressed.write(to: archiveURL, options: .atomic)
+        } catch {
+            return workout   // couldn't write the archive: keep the samples in the session itself
+        }
         SampleArchive.remember(workout.samples, id: workout.id)
 
         copy.samples = []
@@ -536,12 +616,17 @@ final class WorkoutStore: ObservableObject {
         return copy
     }
 
-    private func writeWorkoutMetadata(_ workout: SavedWorkout) {
+    @discardableResult
+    private func writeWorkoutMetadata(_ workout: SavedWorkout) -> Bool {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = workoutsDirectory.appendingPathComponent("\(workout.id.uuidString).json")
-        if let data = try? encoder.encode(workout) {
-            try? data.write(to: url, options: .atomic)
+        guard let data = try? encoder.encode(workout) else { return false }
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -730,8 +815,7 @@ final class WorkoutStore: ObservableObject {
     private func loadReadiness() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: readinessFileURL),
-              let list = try? decoder.decode([ReadinessReading].self, from: data) else { return }
+        guard let list = loadList(ReadinessReading.self, from: readinessFileURL, decoder: decoder, what: "morning checks") else { return }
         readinessReadings = list.sorted { $0.date > $1.date }
     }
 
@@ -771,8 +855,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     private func loadPlans() {
-        guard let data = try? Data(contentsOf: plansFileURL),
-              let list = try? PlanTransfer.decoder.decode([TrainingPlan].self, from: data) else { return }
+        guard let list = loadList(TrainingPlan.self, from: plansFileURL, decoder: PlanTransfer.decoder, what: "training plans") else { return }
         plans = list
     }
 
@@ -825,8 +908,7 @@ final class WorkoutStore: ObservableObject {
     private func loadWeighIns() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: weighInsFileURL),
-              let list = try? decoder.decode([WeighIn].self, from: data) else { return }
+        guard let list = loadList(WeighIn.self, from: weighInsFileURL, decoder: decoder, what: "weigh-ins") else { return }
         weighIns = list.sorted { $0.date > $1.date }
     }
 
@@ -902,8 +984,7 @@ final class WorkoutStore: ObservableObject {
     private func loadSoreness() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: sorenessFileURL),
-              let list = try? decoder.decode([SorenessEntry].self, from: data) else { return }
+        guard let list = loadList(SorenessEntry.self, from: sorenessFileURL, decoder: decoder, what: "soreness notes") else { return }
         soreness = list.sorted { $0.date > $1.date }
     }
 
@@ -975,7 +1056,7 @@ final class TCXStreamParser: NSObject, XMLParserDelegate {
         let delegate = TCXStreamParser()
         let parser = XMLParser(data: data)
         parser.delegate = delegate
-        guard parser.parse(), delegate.samples.count >= 5 else { return nil }
+        guard data.count <= 50 * 1024 * 1024, parser.parse(), delegate.samples.count >= 5 else { return nil }
 
         let bpms = delegate.samples.map(\.bpm)
         let avg = bpms.reduce(0, +) / bpms.count
@@ -1017,7 +1098,8 @@ final class TCXStreamParser: NSObject, XMLParserDelegate {
             } else if elementName == "HeartRateBpm" {
                 inHeartRate = false
             } else if elementName == "Trackpoint" {
-                if let bpm = currentBPM, bpm > 30 {
+                // Real heart rates only (and a sane number of points), whatever the file says.
+                if let bpm = currentBPM, (30...250).contains(bpm), samples.count < 200_000 {
                     let ts = currentTimestamp ?? Date()
                     if firstDate == nil { firstDate = ts }
                     let elapsed = max(0, ts.timeIntervalSince(firstDate ?? ts))

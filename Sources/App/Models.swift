@@ -1358,3 +1358,11 @@ enum FighterAnalytics {
         return String(format: "%02d:%02d", s / 60, s % 60)
     }
 }
+
+/// Decodes a value if it can, and nil if it can't, so one bad record in a list doesn't fail the list.
+struct Lossy<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}

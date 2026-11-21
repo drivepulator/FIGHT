@@ -160,45 +160,41 @@ struct WorkoutDetailView: View {
         .navigationTitle(workout.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    storyFocus = workout.run?.hasRoute == true ? .route : .mainEvent
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .accessibilityLabel("Share to your story")
-                if healthKit.isAvailable {
+            ToolbarItem(placement: .topBarTrailing) {
+                // One clear menu instead of four look-alike icons.
+                Menu {
                     Button {
-                        guard !healthKit.isSaved(workout), !isSavingToHealth else { return }
-                        isSavingToHealth = true
-                        let samplesForHealth = loadedSamples
-                        Task {
-                            await healthKit.save(workout: workout, samples: samplesForHealth)
-                            isSavingToHealth = false
-                        }
+                        storyFocus = workout.run?.hasRoute == true ? .route : (workout.hasHeartRate ? .mainEvent : .profile)
                     } label: {
-                        if isSavingToHealth {
-                            ProgressView()
-                        } else {
-                            Image(systemName: healthKit.isSaved(workout) ? "heart.text.square.fill" : "heart.text.square")
-                                .foregroundStyle(healthKit.isSaved(workout) ? .pink : .primary)
-                        }
+                        Label("Share to your story", systemImage: "camera.fill")
                     }
-                    .accessibilityLabel(healthKit.isSaved(workout) ? "Saved to Apple Health" : "Save to Apple Health")
-                }
-
-                Button {
-                    showingComparison = true
+                    if healthKit.isAvailable {
+                        Button {
+                            saveToHealth()
+                        } label: {
+                            Label(healthKit.isSaved(workout) ? "Saved to Apple Health" : "Save to Apple Health",
+                                  systemImage: healthKit.isSaved(workout) ? "checkmark.circle.fill" : "heart.text.square")
+                        }
+                        .disabled(healthKit.isSaved(workout) || isSavingToHealth)
+                    }
+                    Button {
+                        showingComparison = true
+                    } label: {
+                        Label("Compare with another session", systemImage: "square.stack.3d.up")
+                    }
+                    Button {
+                        exportURL = workoutStore.exportTCXFile(for: workout)
+                    } label: {
+                        Label("Export TCX file", systemImage: "doc")
+                    }
                 } label: {
-                    Image(systemName: "square.stack.3d.up")
+                    if isSavingToHealth {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
                 }
-
-                Button {
-                    exportURL = workoutStore.exportTCXFile(for: workout)
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .accessibilityLabel("Export TCX")
+                .accessibilityLabel("Share and export")
             }
         }
         .sheet(item: Binding(
@@ -217,6 +213,17 @@ struct WorkoutDetailView: View {
         }
     }
 
+    private func saveToHealth() {
+        guard !healthKit.isSaved(workout), !isSavingToHealth else { return }
+        isSavingToHealth = true
+        let samplesForHealth = loadedSamples
+        let route = workout.run != nil ? workoutStore.loadRoute(for: workout.id) : []
+        Task {
+            await healthKit.save(workout: workout, samples: samplesForHealth, route: route)
+            isSavingToHealth = false
+        }
+    }
+
     private var headerSummaryCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -228,17 +235,9 @@ struct WorkoutDetailView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        Text(workout.drillTag.rawValue)
+                        Text(workout.drillTag.label(for: workout.category))
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
-                        if workout.isCompressedArchive {
-                            Text("ARCHIVED")
-                                .font(.system(size: 9, weight: .heavy))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.purple.opacity(0.25), in: Capsule())
-                                .foregroundStyle(.purple)
-                        }
                     }
                 }
                 Spacer()
@@ -416,7 +415,7 @@ struct WorkoutDetailView: View {
                                 Image(systemName: poi.symbol)
                                 Text(poi.shortTag)
                             }
-                            .font(.system(size: 9, weight: .heavy))
+                            .font(.caption2.weight(.heavy))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 3)
                             .background(Color.black.opacity(0.82), in: Capsule())

@@ -66,6 +66,7 @@ extension MainChoice {
 /// The workout that Start will run: last time's, the coach's pick, or a loaded plan.
 private struct ReadyCard: View {
     @Environment(WorkoutSession.self) var session
+    @State private var preparingVoice = false
 
     private var header: String {
         if session.queuedPlan != nil { return "Plan ready" }
@@ -92,15 +93,29 @@ private struct ReadyCard: View {
                 .accessibilityLabel("Clear")
             }
             Button {
-                session.startWorkout()
+                guard session.bagEnabled else { session.startWorkout(); return }
+                preparingVoice = true
+                Task {
+                    await session.audio.prepareVocabulary(prefs: session.bagPrefs)
+                    preparingVoice = false
+                    session.startWorkout()
+                }
             } label: {
-                Label("Start", systemImage: "play.fill")
-                    .font(.headline)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
+                Group {
+                    if preparingVoice {
+                        ProgressView().tint(.white)
+                    } else {
+                        Label("Start", systemImage: "play.fill")
+                    }
+                }
+                .font(.headline)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
             }
             .buttonStyle(.borderedProminent)
             .tint(.green)
+            .disabled(preparingVoice)
+            .accessibilityLabel(preparingVoice ? "Preparing the coach's voice" : "Start")
         }
         .card()
     }
@@ -290,6 +305,7 @@ private struct ReadyView: View {
     let finish: () -> Void
     @State private var length: LengthOption?
     @State private var showingBagSettings = false
+    @State private var preparingVoice = false
 
     var body: some View {
         ScrollView {
@@ -332,16 +348,38 @@ private struct ReadyView: View {
                 .foregroundStyle(.secondary)
                 Button {
                     session.choose(option, length: length)
-                    session.startWorkout()
-                    finish()
+                    guard option.bagCoach else {
+                        session.startWorkout()
+                        finish()
+                        return
+                    }
+                    // The coach's voice has to be ready before the first combo (first time, or after
+                    // changing stance or voice). Usually instant: lines are saved on the phone.
+                    preparingVoice = true
+                    Task {
+                        await session.audio.prepareVocabulary(prefs: session.bagPrefs)
+                        preparingVoice = false
+                        session.startWorkout()
+                        finish()
+                    }
                 } label: {
-                    Label("Start", systemImage: "play.fill")
-                        .font(.title3.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                    Group {
+                        if preparingVoice {
+                            HStack(spacing: 10) {
+                                ProgressView().tint(.white)
+                                Text("Preparing the coach's voice…")
+                            }
+                        } else {
+                            Label("Start", systemImage: "play.fill")
+                        }
+                    }
+                    .font(.title3.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
+                .disabled(preparingVoice)
                 if option.bagCoach {
                     Button("Adjust stance, level and combos") { showingBagSettings = true }
                         .font(.subheadline)

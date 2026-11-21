@@ -260,6 +260,17 @@ private final class RunSensors: NSObject, CBCentralManagerDelegate, CBPeripheral
     private var central: CBCentralManager?
     private var peripherals: [CBPeripheral] = []
     private var running = false
+    private var scanStopper: DispatchWorkItem?
+
+    /// Your own sensors: once FIGHT has used a foot pod or GPS receiver, it's remembered and
+    /// reconnected; nobody else's device is picked up by accident at a group session.
+    private static let rememberedKey = "fight.run.sensors"
+    private var remembered: [UUID] {
+        get { (UserDefaults.standard.stringArray(forKey: Self.rememberedKey) ?? []).compactMap(UUID.init) }
+        set { UserDefaults.standard.set(newValue.map(\.uuidString), forKey: Self.rememberedKey) }
+    }
+    /// A new device must be this close (on your shoe or arm) to be adopted.
+    static let adoptRSSI = -50
 
     func start() {
         running = true
@@ -272,6 +283,8 @@ private final class RunSensors: NSObject, CBCentralManagerDelegate, CBPeripheral
 
     func stop() {
         running = false
+        scanStopper?.cancel()
+        scanStopper = nil
         central?.stopScan()
         for p in peripherals { central?.cancelPeripheralConnection(p) }
         peripherals.removeAll()
@@ -280,10 +293,16 @@ private final class RunSensors: NSObject, CBCentralManagerDelegate, CBPeripheral
 
     private func scan(_ c: CBCentralManager) {
         guard running else { return }
+        // Already connected to this phone, or used before: these are yours.
         for p in c.retrieveConnectedPeripherals(withServices: [Self.lns, Self.rsc]) { connect(p, c) }
+        for p in c.retrievePeripherals(withIdentifiers: remembered) { connect(p, c) }
         c.scanForPeripherals(withServices: [Self.lns, Self.rsc], options: nil)
-        // Stop looking after 20 s: if nothing's around, don't keep the radio busy.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in self?.central?.stopScan() }
+        // Stop looking after 20 s: if nothing's around, don't keep the radio busy. This run's timer
+        // only (an old one from an earlier run can't cut a new search short).
+        scanStopper?.cancel()
+        let stopper = DispatchWorkItem { [weak self] in self?.central?.stopScan() }
+        scanStopper = stopper
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: stopper)
     }
 
     private func connect(_ p: CBPeripheral, _ c: CBCentralManager) {
@@ -299,6 +318,9 @@ private final class RunSensors: NSObject, CBCentralManagerDelegate, CBPeripheral
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        let known = remembered.contains(peripheral.identifier)
+        // A device nobody has used here before is only adopted when it's right next to the phone.
+        guard known || (RSSI.intValue >= Self.adoptRSSI && RSSI.intValue < 0) else { return }
         connect(peripheral, central)
     }
 
@@ -315,6 +337,7 @@ private final class RunSensors: NSObject, CBCentralManagerDelegate, CBPeripheral
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         for ch in service.characteristics ?? [] where ch.uuid == Self.lnsMeasurement || ch.uuid == Self.rscMeasurement {
             peripheral.setNotifyValue(true, for: ch)
+            if !remembered.contains(peripheral.identifier) { remembered = remembered + [peripheral.identifier] }
             if ch.uuid == Self.lnsMeasurement { gpsName = peripheral.name ?? "Bluetooth GPS" }
             if ch.uuid == Self.rscMeasurement { podName = peripheral.name ?? "Foot pod" }
         }

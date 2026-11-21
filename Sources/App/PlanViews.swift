@@ -475,6 +475,11 @@ struct BlockEditorView: View {
                 ))
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
+                if let v = block.videoURL, !v.isEmpty, PlanBlock.safeVideoURL(v) == nil {
+                    Text("Use a web link starting with https://. Other links won't open.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
             }
         }
@@ -781,8 +786,17 @@ struct PlanImportSheet: View {
     @Environment(\.dismiss) private var dismiss
     let plan: TrainingPlan
 
+    /// Your plan with the same ID, if any. Built-in plans (templates, plyo) never count: those
+    /// IDs are reserved, so an incoming plan using one is always saved as a copy.
+    private var match: TrainingPlan? { workoutStore.plans.first { $0.id == plan.id } }
+    private var reservedID: Bool {
+        PlyoVariant.allCases.contains { $0.planID == plan.id } || PlanTemplates.all.contains { $0.id == plan.id }
+    }
+    /// What gets saved when you're not replacing anything: never overwrites one of your plans.
+    private var safeCopy: TrainingPlan { match != nil || reservedID ? plan.duplicated() : plan }
+
     var body: some View {
-        let existing = workoutStore.plans.contains { $0.id == plan.id }
+        let existing = match != nil
         NavigationStack {
             List {
                 Section {
@@ -796,7 +810,7 @@ struct PlanImportSheet: View {
                             .foregroundStyle(.secondary)
                         if !plan.notes.isEmpty { Text(plan.notes).font(.subheadline) }
                         if existing {
-                            Label("You already have this plan; saving will update it.", systemImage: "arrow.triangle.2.circlepath")
+                            Label("You already have a plan called “\(match?.title ?? plan.title)” with this ID. Replace it, or keep both.", systemImage: "arrow.triangle.2.circlepath")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
@@ -814,19 +828,29 @@ struct PlanImportSheet: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 8) {
                     Button {
-                        workoutStore.upsertPlan(plan)
-                        navigation.run(plan)
+                        let copy = safeCopy
+                        workoutStore.upsertPlan(copy)
+                        navigation.run(copy)
                         dismiss()
                     } label: {
                         Label("Save & Start Now", systemImage: "play.fill").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
+                    if let match, !reservedID {
+                        Button {
+                            workoutStore.upsertPlan(plan)
+                            dismiss()
+                        } label: {
+                            Label("Replace “\(match.title)”", systemImage: "arrow.triangle.2.circlepath").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
                     Button {
-                        workoutStore.upsertPlan(plan)
+                        workoutStore.upsertPlan(safeCopy)
                         dismiss()
                     } label: {
-                        Label(existing ? "Update My Plan" : "Save to My Plans", systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity)
+                        Label(existing ? "Keep both" : "Save to My Plans", systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                 }

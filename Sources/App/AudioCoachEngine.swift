@@ -93,6 +93,38 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         super.init()
         buildGraph()
         voiceName = bestVoice?.name ?? "System voice"
+        observeInterruptions()
+    }
+
+    /// A phone call, Siri or another app taking the audio stops the engine; so does plugging in or
+    /// unplugging headphones. Bring bells, voice and bag-hit counting back as soon as it's over.
+    private func observeInterruptions() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if type == .began {
+                    self.wasRunningBeforeInterruption = self.engine.isRunning
+                } else if self.wasRunningBeforeInterruption {
+                    self.resumeAfterInterruption()
+                }
+            }
+        }
+        center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                // Only if a session is using the audio (never wake it up when the app is idle).
+                guard let self, self.isBagCoachRunning || self.hitTapInstalled else { return }
+                self.resumeAfterInterruption()
+            }
+        }
+    }
+
+    private func resumeAfterInterruption() {
+        guard audioEnabled else { return }
+        removeHitTap()          // re-installed with the new input format
+        ensureEngineRunning()
     }
 
     // MARK: Engine & session
@@ -129,6 +161,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     /// Called on the main actor for every bag hit heard.
     var onBagHit: (@MainActor () -> Void)?
     private var hitTapInstalled = false
+    private var wasRunningBeforeInterruption = false
     private let hitDetector = ImpactDetectorBox()
 
     private func activateSession() throws {
@@ -212,6 +245,10 @@ final class AudioCoachEngine: NSObject, ObservableObject {
 
     /// Pre-renders every phrase the bag coach can say, so the first round starts instantly.
     func prepareVocabulary(prefs: BagPreferences) async {
+        // One preparation at a time: a second caller waits, then fills in anything still missing.
+        while isPreparingAudio {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
         let rate = prefs.tempo.speechRate
         if rate != cachedRate {
             phraseCache.removeAll()
@@ -557,9 +594,11 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         bagStatus = ""
         isComboSpeaking = true
 
+        var spoken = combo.count
         switch prefs.mode {
         case .voiceCombos:
             let buffers = texts.compactMap { phraseCache[$0] }
+            spoken = buffers.count
             await playAndWait(buffers, on: comboNode) { [weak self] i in self?.activeTokenIndex = i }
         case .cadenceBeep:
             if let pattern = Self.beepPattern(for: combo) {
@@ -571,12 +610,13 @@ final class AudioCoachEngine: NSObject, ObservableObject {
                 await playAndWait([pattern], on: comboNode)
             }
             let buffers = texts.compactMap { phraseCache[$0] }
+            spoken = buffers.count
             await playAndWait(buffers, on: comboNode) { [weak self] i in self?.activeTokenIndex = i }
         }
         isComboSpeaking = false
         guard !Task.isCancelled, context.isWorkPhase() else { return }
         activeTokenIndex = combo.count
-        strikesCuedCount += combo.count
+        strikesCuedCount += spoken   // only what was actually called out
         onComboPlayed?(combo)
 
         // Throwing time, then the tempo's reset — adapted to the HR plan if enabled.

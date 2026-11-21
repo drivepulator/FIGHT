@@ -191,6 +191,12 @@ final class WorkoutSession {
     var activePlan: WorkoutPrescription?
     /// The picker's name for this workout ("Muay Thai · Bag work"); nil when set up another way.
     var activityName: String?
+    /// Shown when a finished session couldn't be written to storage.
+    var saveError: String?
+    /// Why a fitness test didn't update the zones (too short, no heart rate).
+    var lthrTestNote: String?
+    @ObservationIgnored private var unsavedWorkout: SavedWorkout?
+    static let saveErrorText = "This session couldn't be saved, probably because your iPhone is full. Nothing is lost: free up some space and reopen FIGHT, and it will offer to save it again."
     /// Round count for timed rounds without the bag coach (the bag coach counts its own).
     var plannedRounds: Int?
 
@@ -791,6 +797,16 @@ final class WorkoutSession {
 
     func startWorkout() {
         guard !isRecording else { return }
+        // A finished session that couldn't be saved is still in the crash-safety copy, which a new
+        // session would overwrite: save it first, or don't start.
+        if let unsaved = unsavedWorkout {
+            guard store?.save(unsaved) == true else {
+                saveError = Self.saveErrorText
+                return
+            }
+            unsavedWorkout = nil
+            deleteDraft()
+        }
         rememberSetup()
         draftID = UUID()
         draftSamplesWritten = 0
@@ -985,9 +1001,14 @@ final class WorkoutSession {
 
         let current = store.activeProfile
         if selectedCategory == .lthrTest {
+            // Only a real test changes your zones: at least 15 of the 20 effort minutes, with heart rate.
             let trial = samples.filter { $0.elapsedSeconds >= 600 }
-            let source = trial.count >= 30 ? trial : samples
-            if !source.isEmpty {
+            let source = trial
+            if trial.count < 900 {
+                lthrTestNote = trial.isEmpty
+                    ? "The test ended before the 20-minute effort started, so your zones haven't changed."
+                    : "The test needs at least 15 minutes of the 20-minute effort with your strap on. You did \(trial.count / 60) min, so your zones haven't changed."
+            } else {
                 var updated = current
                 previousThreshold = (current.lactateThresholdHR, current.zoneMethod)
                 updated.lactateThresholdHR = source.map(\.bpm).reduce(0, +) / source.count
@@ -1009,8 +1030,13 @@ final class WorkoutSession {
                 saved.calories = saved.activeCalories + saved.bmrCalories
             }
         }
-        store.save(saved)
-        deleteDraft()
+        if store.save(saved) {
+            deleteDraft()
+        } else {
+            // Not written (phone full?): the crash-safety copy stays and is offered again next launch.
+            unsavedWorkout = saved
+            saveError = Self.saveErrorText
+        }
 
         if let health, health.autoSaveEnabled {
             let sensor = ble?.sensorInfo
@@ -1601,7 +1627,7 @@ final class WorkoutSession {
             workoutStartDate: Date(), isTimedRound: roundTimerEnabled, roundNumber: 1, isRest: false,
             phaseEndDate: Date().addingTimeInterval(TimeInterval(workDurationSeconds))
         )
-        currentActivity = try? Activity.request(attributes: attributes, content: .init(state: state, staleDate: nil), pushType: nil)
+        currentActivity = try? Activity.request(attributes: attributes, content: .init(state: state, staleDate: Date().addingTimeInterval(120)), pushType: nil)
         lastActivityPush = Date()
         lastActivityState = nil
     }
@@ -1631,7 +1657,15 @@ final class WorkoutSession {
             distanceText: run.isActive ? "\(RouteMath.distanceText(run.distanceM, imperial: run.imperial)) \(run.imperial ? "mi" : "km")" : nil,
             paceText: run.isActive ? "\(RouteMath.paceText(run.currentPace)) /\(run.imperial ? "mi" : "km")" : nil
         )
-        Task { await activity.update(.init(state: state, staleDate: nil)) }
+        // Updates come at least every 15 s; if the app stops, the Lock Screen shows it as stale.
+        Task { await activity.update(.init(state: state, staleDate: Date().addingTimeInterval(120))) }
+    }
+
+    /// Clears Lock Screen activities left over from a session that ended with a crash.
+    static func endLeftoverActivities() {
+        for activity in Activity<WorkoutActivityAttributes>.activities {
+            Task { await activity.end(nil, dismissalPolicy: .immediate) }
+        }
     }
 
     private func endLiveActivity() {
@@ -1744,19 +1778,22 @@ final class WorkoutSession {
     }
 
     func resolveRecoveredDraft(save: Bool) {
-        guard let draft = recoverableDraft else { return }
+        guard let draft = recoverableDraft, let store else { return }
         recoverableDraft = nil
-        deleteDraft()
-        guard let store else { return }
         let owner = store.profiles.first { $0.id == draft.profileID } ?? store.activeProfile
         let saved = WorkoutFinalizer.makeWorkout(from: draft, profile: owner, ghost: nil, end: draft.lastUpdate)
         if let route = draft.route { store.saveRoute(RouteMath.simplify(route), for: saved.id) }
         guard save else {
             // "Discard" still keeps it in Recently Deleted for 30 days.
             store.saveToTrash(saved)
+            deleteDraft()
             return
         }
-        store.save(saved)
+        guard store.save(saved) else {
+            saveError = Self.saveErrorText
+            return   // the draft stays, so it's offered again
+        }
+        deleteDraft()
         finishedWorkout = saved
         showingSummary = true
     }

@@ -143,6 +143,9 @@ For the most accurate morning check and threshold detection, use a chest strap. 
 - No account, no server, no analytics, no ads.
 - Sessions, check-ins and weigh-ins are stored on your iPhone, in a folder you can open in the Files app.
 - Data only leaves the phone when you send it: Apple Health, a TCX file, the PDF report, a story sticker or a backup.
+- Shared run routes leave off the first and last 200 m by default, so a sticker doesn't show where you live or train.
+- Plans from links, QR codes and files are checked before they open: sizes and values are capped, and only https video links are allowed.
+- If a data file is ever damaged, FIGHT keeps a copy of it and tells you, instead of starting over.
 
 ## Install
 

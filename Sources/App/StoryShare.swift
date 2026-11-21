@@ -119,6 +119,8 @@ struct StoryPrivacy {
     var hideName: Bool
     var hideWeight: Bool
     var onlyImprovements: Bool
+    /// Leave the first and last ~200 m off shared routes (where you live or train).
+    var hideRouteEnds = true
 }
 
 typealias StoryStat = (value: String, label: String, good: Bool)
@@ -412,7 +414,8 @@ struct StoryCard: View {
         case .progress: progress
         case .record: record
         case .countdown: countdown
-        case .route, .splits, .roadwork: RunSticker(kind: kind, data: data, dark: darkInk, hideName: privacy.hideName)
+        case .route, .splits, .roadwork: RunSticker(kind: kind, data: data, dark: darkInk, hideName: privacy.hideName,
+                                                    hideRouteEnds: privacy.hideRouteEnds)
         }
     }
 
@@ -816,8 +819,11 @@ private struct RunSticker: View {
     let data: StoryData
     let dark: Bool
     let hideName: Bool
+    var hideRouteEnds = true
 
     private var ink: Color { dark ? Color(white: 0.08) : .white }
+    /// The route as shared: with the privacy zone applied.
+    private var shownRoute: [RoutePoint] { hideRouteEnds ? RouteMath.trimEnds(data.route) : data.route }
     private var glow: Color { dark ? .white.opacity(0.5) : .black.opacity(0.45) }
 
     var body: some View {
@@ -834,9 +840,11 @@ private struct RunSticker: View {
 
     private func route(_ run: RunSummary) -> some View {
         VStack(spacing: 14) {
-            RouteShape(points: RouteMath.normalized(data.route))
-                .stroke(ink, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
-                .frame(width: 190, height: 190)
+            if shownRoute.count >= 2 {
+                RouteShape(points: RouteMath.normalized(shownRoute))
+                    .stroke(ink, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                    .frame(width: 190, height: 190)
+            }
             HStack(alignment: .bottom, spacing: 26) {
                 figure("Distance", RouteMath.distanceText(run.distanceM, imperial: run.imperial), unit(run))
                 figure("Time", runClock(run.movingSeconds), nil)
@@ -887,8 +895,8 @@ private struct RunSticker: View {
         return VStack(alignment: .leading, spacing: 0) {
             BroadcastTab(text: hideName || data.name.isEmpty ? "Roadwork" : "\(data.name) · Roadwork")
             VStack(alignment: .leading, spacing: 10) {
-                if data.route.count >= 2 {
-                    RouteShape(points: RouteMath.normalized(data.route))
+                if shownRoute.count >= 2 {
+                    RouteShape(points: RouteMath.normalized(shownRoute))
                         .stroke(broadcastRed, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
                         .frame(height: 150)
                         .frame(maxWidth: .infinity)
@@ -947,6 +955,7 @@ struct StoryShareSheet: View {
     @AppStorage("fight.story.hideName") private var hideName = false
     @AppStorage("fight.story.hideWeight") private var hideWeight = true
     @AppStorage("fight.story.onlyImprovements") private var onlyImprovements = true
+    @AppStorage("fight.story.hideRouteEnds") private var hideRouteEnds = true
     @AppStorage("fight.story.overlayOneLine") private var overlayOneLine = false
 
     private enum BackgroundChoice: String, CaseIterable, Identifiable {
@@ -965,7 +974,7 @@ struct StoryShareSheet: View {
     @State private var alertText: String?
 
     private var privacy: StoryPrivacy {
-        StoryPrivacy(hideName: hideName, hideWeight: hideWeight, onlyImprovements: onlyImprovements)
+        StoryPrivacy(hideName: hideName, hideWeight: hideWeight, onlyImprovements: onlyImprovements, hideRouteEnds: hideRouteEnds)
     }
 
     var body: some View {
@@ -1114,6 +1123,17 @@ struct StoryShareSheet: View {
             Toggle("Hide my weight", isOn: $hideWeight)
             Divider().padding(.vertical, 8)
             Toggle("Only show improvements", isOn: $onlyImprovements)
+            if workout?.run?.hasRoute == true {
+                Divider().padding(.vertical, 8)
+                Toggle(isOn: $hideRouteEnds) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hide start and end of my route")
+                        Text("Leaves the first and last 200 m off, so nobody can see where you live or train.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .font(.subheadline)
         .card()

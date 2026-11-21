@@ -115,6 +115,24 @@ enum RouteMath {
         return xy.map { CGPointValue(x: (($0.x - minX) + ox) / span, y: 1 - (($0.y - minY) + oy) / span) }
     }
 
+    /// Privacy zone, like Strava's: drops the first and last `meters` of a route so a shared map
+    /// doesn't show where you live or train. Routes too short to trim safely come back empty.
+    static func trimEnds(_ pts: [RoutePoint], meters: Double = 200) -> [RoutePoint] {
+        guard pts.count >= 2, totalDistance(pts) > meters * 2.5 else { return [] }
+        func firstIndexPast(_ list: [RoutePoint]) -> Int {
+            var d = 0.0
+            for i in 1..<list.count {
+                d += distance(list[i - 1], list[i])
+                if d >= meters { return i }
+            }
+            return list.count - 1
+        }
+        let start = firstIndexPast(pts)
+        let end = pts.count - 1 - firstIndexPast(Array(pts.reversed()))
+        guard end > start else { return [] }
+        return Array(pts[start...end])
+    }
+
     /// Ramer–Douglas–Peucker simplification (tolerance in metres), then at most one point per
     /// `minSpacing` metres. Keeps the shape of the route at a fraction of the points.
     static func simplify(_ pts: [RoutePoint], tolerance: Double = 2, minSpacing: Double = 5) -> [RoutePoint] {

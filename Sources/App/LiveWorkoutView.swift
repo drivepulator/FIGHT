@@ -163,6 +163,22 @@ struct LiveWorkoutView: View {
             .sheet(isPresented: $showingSetup) {
                 setupSheet
             }
+            .alert("Fitness test didn't count", isPresented: Binding(
+                get: { session.lthrTestNote != nil },
+                set: { if !$0 { session.lthrTestNote = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(session.lthrTestNote ?? "")
+            }
+            .alert("Session not saved", isPresented: Binding(
+                get: { session.saveError != nil },
+                set: { if !$0 { session.saveError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(session.saveError ?? "")
+            }
             .sheet(item: $chooser, onDismiss: {
                 // Plyo and Mix have their own screens: open them once the picker has closed.
                 switch chooserFollowUp {
@@ -1399,9 +1415,10 @@ struct PlanRunnerCard: View {
                             .italic()
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if let v = b.videoURL, let url = URL(string: v) {
+                    // Only plain web links, with the site shown so you know where it goes.
+                    if let v = PlanBlock.safeVideoURL(b.videoURL), let url = URL(string: v), let host = url.host {
                         Link(destination: url) {
-                            Label("Watch technique", systemImage: "play.rectangle.fill")
+                            Label("Watch technique (\(host.replacingOccurrences(of: "www.", with: "")))", systemImage: "play.rectangle.fill")
                                 .font(.subheadline)
                         }
                     }
