@@ -191,16 +191,43 @@ final class WorkoutStore: ObservableObject {
         var deleted: [DeletedProfile]?
     }
 
+    /// Files that exist but can't be decoded (truncated write, a future format) are moved
+    /// here instead of being overwritten by the next save, so nothing is silently lost.
+    var unreadableDirectory: URL {
+        let dir = documentsDirectory.appendingPathComponent("Unreadable", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Set when a data file couldn't be read at launch; the UI can tell the fighter.
+    @Published var unreadableFiles: [String] = []
+
+    /// Moves an existing but undecodable file aside, keeping a timestamped copy.
+    private func quarantine(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let dest = unreadableDirectory.appendingPathComponent("\(stamp)_\(url.lastPathComponent)")
+        do {
+            try FileManager.default.moveItem(at: url, to: dest)
+        } catch {
+            try? FileManager.default.copyItem(at: url, to: dest)
+        }
+        unreadableFiles.append(url.lastPathComponent)
+    }
+
     private func loadProfilesFromDisk() {
         let decoder = JSONDecoder()
 
-        if let data = try? Data(contentsOf: profilesFileURL),
-           let container = try? decoder.decode(ProfileContainer.self, from: data),
-           !container.profiles.isEmpty {
-            self.profiles = container.profiles
-            self.activeProfileID = container.activeProfileID
-            self.deletedProfiles = container.deleted ?? []
-            return
+        if let data = try? Data(contentsOf: profilesFileURL) {
+            if let container = try? decoder.decode(ProfileContainer.self, from: data),
+               !container.profiles.isEmpty {
+                self.profiles = container.profiles
+                self.activeProfileID = container.activeProfileID
+                self.deletedProfiles = container.deleted ?? []
+                return
+            }
+            // Don't overwrite fighters we couldn't read with a blank default.
+            quarantine(profilesFileURL)
         }
 
         let defaultFighter = AthleteProfile()
@@ -338,9 +365,12 @@ final class WorkoutStore: ObservableObject {
 
         var loaded: [SavedWorkout] = []
         for file in files where file.pathExtension == "json" {
-            if let data = try? Data(contentsOf: file),
-               let workout = try? decoder.decode(SavedWorkout.self, from: data) {
+            guard let data = try? Data(contentsOf: file) else { continue }
+            if let workout = try? decoder.decode(SavedWorkout.self, from: data) {
                 loaded.append(workout)
+            } else {
+                // Left in place (never overwritten); just reported.
+                unreadableFiles.append(file.lastPathComponent)
             }
         }
         workouts = loaded.filter { $0.deletedAt == nil }.sorted { $0.startDate > $1.startDate }
@@ -730,8 +760,11 @@ final class WorkoutStore: ObservableObject {
     private func loadReadiness() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: readinessFileURL),
-              let list = try? decoder.decode([ReadinessReading].self, from: data) else { return }
+        guard let data = try? Data(contentsOf: readinessFileURL) else { return }
+        guard let list = try? decoder.decode([ReadinessReading].self, from: data) else {
+            quarantine(readinessFileURL)
+            return
+        }
         readinessReadings = list.sorted { $0.date > $1.date }
     }
 
@@ -771,8 +804,11 @@ final class WorkoutStore: ObservableObject {
     }
 
     private func loadPlans() {
-        guard let data = try? Data(contentsOf: plansFileURL),
-              let list = try? PlanTransfer.decoder.decode([TrainingPlan].self, from: data) else { return }
+        guard let data = try? Data(contentsOf: plansFileURL) else { return }
+        guard let list = try? PlanTransfer.decoder.decode([TrainingPlan].self, from: data) else {
+            quarantine(plansFileURL)
+            return
+        }
         plans = list
     }
 
@@ -825,8 +861,11 @@ final class WorkoutStore: ObservableObject {
     private func loadWeighIns() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: weighInsFileURL),
-              let list = try? decoder.decode([WeighIn].self, from: data) else { return }
+        guard let data = try? Data(contentsOf: weighInsFileURL) else { return }
+        guard let list = try? decoder.decode([WeighIn].self, from: data) else {
+            quarantine(weighInsFileURL)
+            return
+        }
         weighIns = list.sorted { $0.date > $1.date }
     }
 
@@ -902,8 +941,11 @@ final class WorkoutStore: ObservableObject {
     private func loadSoreness() {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: sorenessFileURL),
-              let list = try? decoder.decode([SorenessEntry].self, from: data) else { return }
+        guard let data = try? Data(contentsOf: sorenessFileURL) else { return }
+        guard let list = try? decoder.decode([SorenessEntry].self, from: data) else {
+            quarantine(sorenessFileURL)
+            return
+        }
         soreness = list.sorted { $0.date > $1.date }
     }
 

@@ -70,6 +70,14 @@ struct FightApp: App {
             } message: {
                 Text(navigation.importError ?? "")
             }
+            .alert("Some data couldn't be read", isPresented: Binding(
+                get: { !workoutStore.unreadableFiles.isEmpty },
+                set: { if !$0 { workoutStore.unreadableFiles = [] } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("\(workoutStore.unreadableFiles.count) file(s) were damaged or from a newer version. They were kept as they are, and nothing was overwritten.")
+            }
             .preferredColorScheme(.dark)
         }
     }
