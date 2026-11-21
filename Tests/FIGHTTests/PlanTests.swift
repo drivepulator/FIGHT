@@ -98,4 +98,45 @@ final class TrainingPlanTests: XCTestCase {
         XCTAssertEqual(PlanFormat.spokenDuration(45), "45 seconds")
         XCTAssertEqual(PlanFormat.clock(185), "3:05")
     }
+
+    // MARK: Untrusted input
+
+    func testImportedPlanWithExtremeValuesIsClamped() throws {
+        let json = """
+        {"title":"evil","blocks":[{"kind":"bagRounds","rounds":4611686018427387904,"workSeconds":3,"restSeconds":-5},
+                                  {"kind":"timedDrill","durationSeconds":-100,"sets":0,"reps":99999}]}
+        """
+        let plan = try PlanTransfer.plan(from: Data(json.utf8))
+        let bag = plan.blocks[0]
+        XCTAssertEqual(bag.rounds, PlanBlock.ImportLimits.rounds.upperBound)
+        XCTAssertEqual(bag.workSeconds, PlanBlock.ImportLimits.workSeconds.lowerBound)
+        XCTAssertEqual(bag.restSeconds, 0)
+        let drill = plan.blocks[1]
+        XCTAssertEqual(drill.durationSeconds, PlanBlock.ImportLimits.durationSeconds.lowerBound)
+        XCTAssertEqual(drill.sets, 1)
+        XCTAssertEqual(drill.reps, PlanBlock.ImportLimits.reps.upperBound)
+        _ = plan.plannedSeconds   // must not trap
+    }
+
+    func testPlannedSecondsNeverTrapsOnOverflow() {
+        var b = PlanBlock(kind: .bagRounds)
+        b.rounds = Int.max
+        b.workSeconds = Int.max
+        b.restSeconds = Int.max
+        XCTAssertGreaterThan(b.plannedSeconds, 0)
+    }
+
+    func testImportedPlanBlockCountIsCapped() throws {
+        let block = #"{"kind":"timedDrill","durationSeconds":60}"#
+        let json = #"{"title":"long","blocks":["# + Array(repeating: block, count: 500).joined(separator: ",") + "]}"
+        let plan = try PlanTransfer.plan(from: Data(json.utf8))
+        XCTAssertEqual(plan.blocks.count, TrainingPlan.maxImportedBlocks)
+    }
+
+    func testEveryTemplateSurvivesImportUnchanged() throws {
+        for plan in PlanTemplates.all {
+            let decoded = try PlanTransfer.plan(from: try PlanTransfer.data(for: plan))
+            XCTAssertEqual(decoded.blocks, plan.blocks, plan.title)
+        }
+    }
 }

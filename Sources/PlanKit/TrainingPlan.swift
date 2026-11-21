@@ -103,7 +103,13 @@ struct PlanBlock: Codable, Identifiable, Equatable, Hashable {
 
     /// Planned length in seconds.
     var plannedSeconds: Int {
-        kind.isRoundBased ? rounds * workSeconds + max(0, rounds - 1) * restSeconds : durationSeconds
+        guard kind.isRoundBased else { return max(0, durationSeconds) }
+        // Overflow-safe: a hand-edited plan must never trap here.
+        let r = max(0, rounds)
+        let (work, o1) = r.multipliedReportingOverflow(by: max(0, workSeconds))
+        let (rest, o2) = max(0, r - 1).multipliedReportingOverflow(by: max(0, restSeconds))
+        let (total, o3) = work.addingReportingOverflow(rest)
+        return (o1 || o2 || o3) ? Int.max / 4 : total
     }
 
     /// Short human summary, e.g. "3 × 3:00 / 1:00" or "2:00".
@@ -158,6 +164,41 @@ struct PlanBlock: Codable, Identifiable, Equatable, Hashable {
         calls = (try? c.decodeIfPresent([String].self, forKey: .calls)) ?? []
         untilRecovered = (try? c.decodeIfPresent(Bool.self, forKey: .untilRecovered)) ?? false
         contacts = (try? c.decodeIfPresent(Int.self, forKey: .contacts)) ?? 0
+        sanitizeImported()
+    }
+
+    /// Limits for plans that arrive from outside the app (files, links, QR codes).
+    /// The in-app editor stays well inside these.
+    enum ImportLimits {
+        static let rounds = 1...50
+        static let workSeconds = 5...3600
+        static let restSeconds = 0...1800
+        static let durationSeconds = 5...14_400
+        static let sets = 1...20
+        static let reps = 1...500
+        static let contacts = 0...10_000
+        static let maxCombos = 200
+        static let maxComboLength = 12
+        static let maxCalls = 50
+        static let maxText = 500
+    }
+
+    /// Clamps every decoded value into a range the round clock and the UI can handle,
+    /// so a malformed or malicious plan can't crash the app or spin the clock.
+    mutating func sanitizeImported() {
+        func clamp(_ v: Int, _ r: ClosedRange<Int>) -> Int { min(max(v, r.lowerBound), r.upperBound) }
+        rounds = clamp(rounds, ImportLimits.rounds)
+        workSeconds = clamp(workSeconds, ImportLimits.workSeconds)
+        restSeconds = clamp(restSeconds, ImportLimits.restSeconds)
+        durationSeconds = clamp(durationSeconds, ImportLimits.durationSeconds)
+        sets = clamp(sets, ImportLimits.sets)
+        reps = clamp(reps, ImportLimits.reps)
+        contacts = clamp(contacts, ImportLimits.contacts)
+        combos = Array(combos.prefix(ImportLimits.maxCombos).map { Array($0.prefix(ImportLimits.maxComboLength)) }.filter { !$0.isEmpty })
+        calls = Array(calls.prefix(ImportLimits.maxCalls).map { String($0.prefix(ImportLimits.maxText)) })
+        title = String(title.prefix(ImportLimits.maxText))
+        cue = String(cue.prefix(ImportLimits.maxText))
+        if let v = videoURL, v.count > 2048 { videoURL = nil }
     }
 }
 
@@ -199,8 +240,15 @@ struct TrainingPlan: Codable, Identifiable, Equatable, Hashable {
         discipline = (try? c.decodeIfPresent(String.self, forKey: .discipline)) ?? "Kickboxing"
         notes = (try? c.decodeIfPresent(String.self, forKey: .notes)) ?? ""
         createdAt = (try? c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date()
-        blocks = (try? c.decodeIfPresent([PlanBlock].self, forKey: .blocks)) ?? []
+        blocks = Array(((try? c.decodeIfPresent([PlanBlock].self, forKey: .blocks)) ?? []).prefix(Self.maxImportedBlocks))
+        title = String(title.prefix(PlanBlock.ImportLimits.maxText))
+        author = String(author.prefix(PlanBlock.ImportLimits.maxText))
+        discipline = String(discipline.prefix(PlanBlock.ImportLimits.maxText))
+        notes = String(notes.prefix(4000))
     }
+
+    /// More blocks than any real session needs; caps imported plans.
+    static let maxImportedBlocks = 100
 
     /// A fresh copy (new IDs) for editing or importing someone else's plan.
     func duplicated(title newTitle: String? = nil) -> TrainingPlan {
