@@ -1399,9 +1399,11 @@ struct PlanRunnerCard: View {
                             .italic()
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if let v = b.videoURL, let url = URL(string: v) {
+                    // Plans can come from anyone: only open web links, and show where they go.
+                    if let v = b.videoURL, let url = URL(string: v.trimmingCharacters(in: .whitespacesAndNewlines)),
+                       url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty {
                         Link(destination: url) {
-                            Label("Watch technique", systemImage: "play.rectangle.fill")
+                            Label("Watch technique (\(host))", systemImage: "play.rectangle.fill")
                                 .font(.subheadline)
                         }
                     }
