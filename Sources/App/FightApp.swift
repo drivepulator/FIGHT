@@ -49,7 +49,10 @@ struct FightApp: App {
                 workoutStore.refreshCoach()
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { workoutStore.flushPendingSaves() }
+                if phase != .active {
+                    workoutStore.flushPendingSaves()
+                    session.saveDraftNow()
+                }
             }
             .onOpenURL { url in
                 navigation.handleOpenURL(url)

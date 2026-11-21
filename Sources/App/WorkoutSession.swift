@@ -1714,6 +1714,13 @@ final class WorkoutSession {
         }
     }
 
+    /// Writes the crash-recovery draft now (called when the app leaves the foreground, where
+    /// iOS may terminate it before the next 30-second save).
+    func saveDraftNow() {
+        guard isRecording else { return }
+        saveDraft()
+    }
+
     private func loadDraft() -> WorkoutDraft? {
         guard let url = draftURL, let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
