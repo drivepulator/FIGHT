@@ -93,6 +93,39 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         super.init()
         buildGraph()
         voiceName = bestVoice?.name ?? "System voice"
+        observeAudioSystem()
+    }
+
+    private var systemObservers: [NSObjectProtocol] = []
+
+    /// A phone call, Siri, an alarm or AirPods connecting stops the engine. Without restarting it
+    /// the app can be suspended while locked and the next bell never rings, so bring it back as
+    /// soon as iOS hands audio back.
+    private func observeAudioSystem() {
+        let center = NotificationCenter.default
+        systemObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification,
+                                                  object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            Task { @MainActor in self?.resumeAfterSystemChange(rebuildTap: false) }
+        })
+        systemObservers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange,
+                                                  object: engine, queue: .main) { [weak self] _ in
+            // The input format can change with the route, so the hit tap is reinstalled.
+            Task { @MainActor in self?.resumeAfterSystemChange(rebuildTap: true) }
+        })
+    }
+
+    /// True between prepareForWorkout and shutdownAudio; outside a workout nothing is restarted.
+    private var workoutAudioActive = false
+
+    private func resumeAfterSystemChange(rebuildTap: Bool) {
+        guard workoutAudioActive, audioEnabled else { return }
+        if rebuildTap {
+            if engine.isRunning { engine.stop() }
+            removeHitTap()
+        }
+        ensureEngineRunning()
     }
 
     // MARK: Engine & session
@@ -191,6 +224,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     /// the background (UIBackgroundModes: audio) so round timing stays accurate.
     func prepareForWorkout(settings: AudioCoachSettings) {
         audioEnabled = true
+        workoutAudioActive = true
         configure(settings: settings)
         ensureEngineRunning()
     }
@@ -198,6 +232,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     /// Stops all audio and releases the session after a workout.
     func shutdownAudio() {
         audioEnabled = false
+        workoutAudioActive = false
         stopBagCoach()
         announcementTask?.cancel()
         announcementTask = nil
