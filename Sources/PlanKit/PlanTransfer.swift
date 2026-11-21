@@ -1,4 +1,5 @@
 import Foundation
+import Compression
 
 /// Encodes plans and results for sharing without a server:
 /// - `.fightplan` / `.fightresult` files (readable JSON) for AirDrop, Messages, WhatsApp, Files
@@ -11,6 +12,11 @@ enum PlanTransfer {
     static let urlScheme = "fight"
     /// QR version 40 (error correction M) holds ~2,300 characters; stay under it.
     static let maxQRCharacters = 2200
+    /// A real plan is a few KB of JSON. Anything bigger is refused before or while it is
+    /// unpacked, so a tiny link can't expand into gigabytes (a "zip bomb") and exhaust memory.
+    static let maxPlanBytes = 1_000_000
+    /// Longest `fight://` link we try to read (links in messages can exceed QR size).
+    static let maxLinkCharacters = 300_000
 
     enum TransferError: LocalizedError {
         case unreadable, newerVersion(Int), notAPlan
@@ -44,6 +50,7 @@ enum PlanTransfer {
     }
 
     static func plan(from data: Data) throws -> TrainingPlan {
+        guard data.count <= maxPlanBytes else { throw TransferError.unreadable }
         guard let plan = try? decoder.decode(TrainingPlan.self, from: data), !plan.blocks.isEmpty else {
             throw TransferError.unreadable
         }
@@ -58,6 +65,7 @@ enum PlanTransfer {
     }
 
     static func result(from data: Data) throws -> SessionResultPackage {
+        guard data.count <= maxPlanBytes * 5 else { throw TransferError.unreadable }
         guard let r = try? decoder.decode(SessionResultPackage.self, from: data) else { throw TransferError.unreadable }
         return r
     }
@@ -110,13 +118,59 @@ enum PlanTransfer {
     }
 
     static func plan(fromLink url: URL) throws -> TrainingPlan {
-        guard url.scheme?.lowercased() == urlScheme, url.host?.lowercased() == "plan",
+        guard url.absoluteString.count <= maxLinkCharacters,
+              url.scheme?.lowercased() == urlScheme, url.host?.lowercased() == "plan",
               let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "d" })?.value,
               let packed = fromBase64url(value) else {
             throw TransferError.notAPlan
         }
-        let raw = (try? (packed as NSData).decompressed(using: .zlib) as Data) ?? packed
+        let raw: Data
+        switch inflate(packed, limit: maxPlanBytes) {
+        case .ok(let d): raw = d
+        case .tooLarge: throw TransferError.unreadable
+        case .notCompressed: raw = packed   // older uncompressed links
+        }
         return try plan(from: raw)
+    }
+
+    enum InflateResult { case ok(Data), tooLarge, notCompressed }
+
+    /// Raw-deflate decompression (the format `NSData.compressed(using: .zlib)` writes)
+    /// that stops as soon as the output passes `limit` bytes.
+    static func inflate(_ input: Data, limit: Int) -> InflateResult {
+        guard !input.isEmpty else { return .notCompressed }
+        let chunk = 64 * 1024
+        let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: chunk)
+        defer { dst.deallocate() }
+        var stream = compression_stream(dst_ptr: dst, dst_size: 0, src_ptr: dst, src_size: 0, state: nil)
+        guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) == COMPRESSION_STATUS_OK else {
+            return .notCompressed
+        }
+        defer { compression_stream_destroy(&stream) }
+        var output = Data()
+        return input.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> InflateResult in
+            guard let base = src.bindMemory(to: UInt8.self).baseAddress else { return .notCompressed }
+            stream.src_ptr = base
+            stream.src_size = input.count
+            while true {
+                stream.dst_ptr = dst
+                stream.dst_size = chunk
+                let srcBefore = stream.src_size
+                let status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                let produced = chunk - stream.dst_size
+                output.append(dst, count: produced)
+                if output.count > limit { return .tooLarge }
+                switch status {
+                case COMPRESSION_STATUS_END:
+                    return output.isEmpty ? .notCompressed : .ok(output)
+                case COMPRESSION_STATUS_OK:
+                    // No input consumed and no output produced: the stream is stuck or truncated.
+                    if produced == 0 && stream.src_size == srcBefore { return .notCompressed }
+                default:
+                    return .notCompressed
+                }
+            }
+        }
     }
 
     static func base64url(_ data: Data) -> String {

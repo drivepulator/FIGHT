@@ -98,4 +98,23 @@ final class TrainingPlanTests: XCTestCase {
         XCTAssertEqual(PlanFormat.spokenDuration(45), "45 seconds")
         XCTAssertEqual(PlanFormat.clock(185), "3:05")
     }
+
+    // MARK: Decompression limits
+
+    func testOversizedCompressedLinkIsRefused() throws {
+        // ~50 MB of zeros compresses to a link of a few tens of KB.
+        let bomb = Data(count: 50_000_000)
+        let packed = try (bomb as NSData).compressed(using: .zlib) as Data
+        let url = try XCTUnwrap(URL(string: "fight://plan?d=" + PlanTransfer.base64url(packed)))
+        XCTAssertThrowsError(try PlanTransfer.plan(fromLink: url))
+    }
+
+    func testInflateRoundTripsAndStopsAtLimit() throws {
+        let raw = Data(String(repeating: "jab cross hook ", count: 1000).utf8)
+        let packed = try (raw as NSData).compressed(using: .zlib) as Data
+        guard case .ok(let out) = PlanTransfer.inflate(packed, limit: 1_000_000) else { return XCTFail("should inflate") }
+        XCTAssertEqual(out, raw)
+        guard case .tooLarge = PlanTransfer.inflate(packed, limit: 100) else { return XCTFail("should hit the limit") }
+        guard case .notCompressed = PlanTransfer.inflate(Data("{}".utf8), limit: 100) else { return XCTFail("plain JSON is not deflate") }
+    }
 }

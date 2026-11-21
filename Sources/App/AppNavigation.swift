@@ -42,6 +42,9 @@ final class AppNavigation: ObservableObject {
             if url.isFileURL {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                // Refuse oversized files before loading them into memory.
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                guard size <= PlanTransfer.maxPlanBytes * 5 else { throw PlanTransfer.TransferError.unreadable }
                 let data = try Data(contentsOf: url)
                 if url.pathExtension.lowercased() == PlanTransfer.resultExtension {
                     incomingResult = try PlanTransfer.result(from: data)
