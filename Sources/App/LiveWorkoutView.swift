@@ -24,6 +24,8 @@ struct LiveWorkoutView: View {
     @State private var showingMix = false
     /// A door picked on the Start sheet; its chooser opens once that sheet has closed.
     @State private var pendingDoor: MainChoice?
+    /// 0 = fight clock, 1 = details.
+    @State private var livePage = 0
     @ScaledMetric(relativeTo: .largeTitle) private var clockSize: CGFloat = 84
 
     var body: some View {
@@ -31,128 +33,47 @@ struct LiveWorkoutView: View {
         let currentZone = profile.zone(for: bleManager.currentBPM)
 
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    connectionBanner
-
-                    if bleManager.isConnected && (bleManager.sensorContactDetected == false || bleManager.isSignalLost) {
-                        Label(bleManager.isSignalLost ? "No heart-rate signal. Check the sensor is on and touching skin." :
-                                "Poor sensor contact. Tighten the band or moisten the sensor.",
-                              systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.orange)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                            .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+            Group {
+                if session.isRecording {
+                    // Fixed fight clock first; swipe for the details.
+                    TabView(selection: $livePage) {
+                        liveMainPage(currentZone: currentZone)
+                            .tag(0)
+                        liveDetailsPage(profile: profile)
+                            .tag(1)
                     }
+                    .tabViewStyle(.page(indexDisplayMode: .always))
+                    .indexViewStyle(.page(backgroundDisplayMode: .interactive))
+                } else {
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            connectionBanner
 
-                    if let plan = session.activePlan, session.isRecording {
-                        planBanner(plan)
-                    }
-
-                    if let lthr = session.lthrTestResultBanner {
-                        lthrSuccessBanner(lthr: lthr)
-                    }
-
-                    if let autoBanner = session.latestAutoHRRBanner, session.isRecording {
-                        Label(autoBanner, systemImage: "arrow.down.heart.fill")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.cyan)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                            .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                    }
-
-                    if session.isRecording {
-                        liveClock
-                        if session.run.isActive {
-                            RunLiveCard(run: session.run)
-                        }
-                        if session.run.isActive && !bleManager.isConnected {
-                            // Running without a strap: keep the screen about distance and pace.
-                            Button {
-                                showingDeviceSheet = true
-                            } label: {
-                                Label("No heart rate. Tap to connect your strap.", systemImage: "heart.slash")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
+                            if let lthr = session.lthrTestResultBanner {
+                                lthrSuccessBanner(lthr: lthr)
                             }
-                            .buttonStyle(.bordered)
-                        } else {
-                            LiveZoneBand(bpm: bleManager.currentBPM,
-                                         zoneName: currentZone.name,
-                                         color: currentZone.color,
-                                         average: session.liveAverageBPM,
-                                         maximum: session.liveMaxBPM,
-                                         calories: Int(session.activeCalories + session.bmrCalories))
-                        }
 
-                        if let record = session.liveRecordBanner {
-                            Label(record, systemImage: "trophy.fill")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(.orange)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                        }
+                            AutoStartBanner()
 
-                        if session.isRunningPlan {
-                            PlanRunnerCard()
-                        }
-
-                        if session.bagEnabled || planBagBlockActive {
-                            BagComboCard(audio: session.audio, round: session.currentRound,
-                                         totalRounds: session.roundsLimit ?? session.totalBagRounds,
-                                         isComplete: session.bagSessionComplete)
-                        }
-
-                        if session.selectedCategory == .lthrTest {
-                            lthrFieldTestCard
-                        }
-
-                        AdvancedSection("Live details", subtitle: "Chart, ghost pace, notes", key: "live.recording") {
-                            if let autoBanner = session.latestAutoHRRBanner {
-                                Label(autoBanner, systemImage: "arrow.down.heart.fill")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(.cyan)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(10)
-                                    .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                            if session.queuedPlan != nil {
+                                ReadyCard()
                             }
-                            if let a = session.liveAlpha1 {
-                                Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
-                                      systemImage: "waveform.path.ecg")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(a >= 0.75 ? .green : .orange)
+
+                            TodayCard()
+
+                            if bleManager.isConnected {
+                                idleHeartRate(currentZone: currentZone)
                             }
-                            liveSparklineCard(profile: profile)
-                            if session.selectedGhost != nil {
-                                ghostSimulatorCard
-                            }
-                            TextField("Corner note…", text: sessionBinding.workoutNotes)
-                                .textFieldStyle(.roundedBorder)
+
+                            WeekStrip()
+
+                            FightCountdownCard()
+
+                            LastSessionCard()
                         }
-                    } else {
-                        AutoStartBanner()
-
-                        if session.queuedPlan != nil {
-                            ReadyCard()
-                        }
-
-                        TodayCard()
-
-                        if bleManager.isConnected {
-                            idleHeartRate(currentZone: currentZone)
-                        }
-
-                        WeekStrip()
-
-                        FightCountdownCard()
-
-                        LastSessionCard()
+                        .padding()
                     }
                 }
-                .padding()
             }
             .background(Theme.canvas.ignoresSafeArea())
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -268,7 +189,7 @@ struct LiveWorkoutView: View {
             .onChange(of: navigation.pendingPrescription) { _, _ in applyPending() }
             .onChange(of: navigation.planToRun) { _, _ in applyPlanToRun() }
             .onChange(of: session.isRecording) { _, recording in
-                if recording { choosingPlan = false; showingSetup = false }
+                if recording { choosingPlan = false; showingSetup = false; livePage = 0 }
             }
             .onChange(of: workoutStore.activeProfileID) { _, _ in
                 session.syncFromProfile()
@@ -1181,6 +1102,238 @@ struct LiveWorkoutView: View {
         .presentationDetents([.large])
     }
 
+    // MARK: Live: fight clock page
+
+    /// Everything that matters mid-round, always on screen: round, clock, heart rate.
+    private func liveMainPage(currentZone: HeartRateZoneInfo) -> some View {
+        VStack(spacing: 12) {
+            liveHeader
+            liveBigNumber
+                .frame(maxHeight: .infinity)
+            liveCallLine
+            liveHeartStrip(currentZone: currentZone)
+            liveWarning
+        }
+        .padding(.horizontal)
+        .padding(.top, 4)
+        .padding(.bottom, 34)
+    }
+
+    @ViewBuilder
+    private var liveHeader: some View {
+        if session.run.isActive {
+            HStack {
+                Label(session.run.isPaused ? "Paused" : "Roadwork",
+                      systemImage: session.run.isPaused ? "pause.fill" : "figure.run")
+                    .font(.headline)
+                    .foregroundStyle(session.run.isPaused ? Color.orange : Color.secondary)
+                Spacer()
+                Text(formatDuration(session.elapsedSeconds))
+                    .font(Theme.number(22))
+            }
+        } else if session.roundTimerEnabled {
+            HStack {
+                RoundDots(current: session.currentRound, total: session.roundsLimit)
+                Spacer()
+                Text(session.isRestPeriod ? "Rest" : "Round \(session.currentRound)\(session.roundsLimit.map { " of \($0)" } ?? "")")
+                    .font(.headline)
+                    .foregroundStyle(session.isRestPeriod ? Color.cyan : Color.primary)
+            }
+        } else {
+            HStack {
+                Text("Time").font(.headline).foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+    }
+
+    /// The clock (or distance on a run), sized to the space that's left.
+    @ViewBuilder
+    private var liveBigNumber: some View {
+        if session.run.isActive {
+            let unit = session.run.imperial ? "mi" : "km"
+            VStack(spacing: 8) {
+                GeometryReader { g in
+                    Text(RouteMath.distanceText(session.run.distanceM, imperial: session.run.imperial))
+                        .font(Theme.number(max(40, min(g.size.height * 0.8, g.size.width * 0.34))))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.4)
+                        .contentTransition(.numericText())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                Text(unit).font(.title3.weight(.bold)).foregroundStyle(.secondary)
+                HStack {
+                    BigNumber(value: RouteMath.paceText(session.run.currentPace), label: "pace /\(unit)", size: 22)
+                    BigNumber(value: RouteMath.paceText(session.run.averagePace), label: "avg /\(unit)", size: 22)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            let rest = session.roundTimerEnabled && session.isRestPeriod
+            VStack(spacing: 4) {
+                GeometryReader { g in
+                    Text(formatDuration(session.roundTimerEnabled ? session.phaseRemaining : session.elapsedSeconds))
+                        .font(Theme.number(max(40, min(g.size.height * 0.8, g.size.width * 0.3))))
+                        .foregroundStyle(rest ? Color.cyan : Color.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.4)
+                        .contentTransition(.numericText())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                if session.roundTimerEnabled {
+                    Text("\(formatDuration(session.elapsedSeconds)) total")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// The bag coach's call or the plan step, when there is one.
+    @ViewBuilder
+    private var liveCallLine: some View {
+        if session.bagEnabled || planBagBlockActive {
+            BagCallStrip(audio: session.audio, isComplete: session.bagSessionComplete)
+        } else if session.isRunningPlan, let block = session.currentBlock {
+            HStack {
+                Text(block.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer()
+                Text(formatDuration(session.blockRemaining))
+                    .font(Theme.number(20))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+
+    /// Heart rate in one zone-tinted strip.
+    private func liveHeartStrip(currentZone: HeartRateZoneInfo) -> some View {
+        let bpm = bleManager.currentBPM
+        let live = bleManager.isConnected && bpm > 0
+        let tint = live ? currentZone.color : Color.secondary
+        let avg = session.liveAverageBPM
+        let top = session.liveMaxBPM
+        return HStack(spacing: 12) {
+            Image(systemName: "heart.fill")
+                .font(.title2)
+                .foregroundStyle(tint)
+                .symbolEffect(.pulse, isActive: live)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(live ? "\(bpm)" : "--")
+                    .font(Theme.number(44))
+                    .contentTransition(.numericText())
+                    .animation(.default, value: bpm)
+                Text(live ? currentZone.name : (bleManager.isConnected ? "No signal" : "No strap · tap to connect"))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(tint)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("avg \(avg > 0 ? "\(avg)" : "--")")
+                Text("max \(top > 0 ? "\(top)" : "--")")
+            }
+            .font(.subheadline.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.5), lineWidth: 1.5))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !bleManager.isConnected { showingDeviceSheet = true }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(live ? "Heart rate \(bpm), \(currentZone.name). Average \(avg), max \(top)." : "No heart rate")
+    }
+
+    /// One short line instead of a banner.
+    @ViewBuilder
+    private var liveWarning: some View {
+        if bleManager.isConnected && (bleManager.sensorContactDetected == false || bleManager.isSignalLost) {
+            Label(bleManager.isSignalLost ? "No signal. Check the strap is on." : "Poor contact. Tighten or wet the strap.",
+                  systemImage: "exclamationmark.triangle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+        } else if session.run.isActive && session.run.permissionDenied {
+            Label("Location is off: distance isn't tracked.", systemImage: "location.slash")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+        }
+    }
+
+    // MARK: Live: details page
+
+    /// Swipe left: chart, plan, combos, records, notes.
+    private func liveDetailsPage(profile: AthleteProfile) -> some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if let plan = session.activePlan {
+                    planBanner(plan)
+                }
+                if let autoBanner = session.latestAutoHRRBanner {
+                    Label(autoBanner, systemImage: "arrow.down.heart.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.cyan)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                }
+                if session.run.isActive {
+                    RunLiveCard(run: session.run)
+                }
+                if let record = session.liveRecordBanner {
+                    Label(record, systemImage: "trophy.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                }
+                if session.isRunningPlan {
+                    PlanRunnerCard()
+                }
+                if session.bagEnabled || planBagBlockActive {
+                    BagComboCard(audio: session.audio, round: session.currentRound,
+                                 totalRounds: session.roundsLimit ?? session.totalBagRounds,
+                                 isComplete: session.bagSessionComplete)
+                }
+                if session.selectedCategory == .lthrTest {
+                    lthrFieldTestCard
+                }
+                Group {
+                    HStack {
+                        BigNumber(value: formatDuration(session.elapsedSeconds), label: "total", size: 22)
+                        BigNumber(value: "\(Int(session.activeCalories))", label: "active kcal", size: 22)
+                        BigNumber(value: "\(Int(session.activeCalories + session.bmrCalories))", label: "total kcal", size: 22)
+                    }
+                    .card()
+                    if let a = session.liveAlpha1 {
+                        Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
+                              systemImage: "waveform.path.ecg")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(a >= 0.75 ? .green : .orange)
+                    }
+                    liveSparklineCard(profile: profile)
+                    if session.selectedGhost != nil {
+                        ghostSimulatorCard
+                    }
+                    TextField("Corner note…", text: sessionBinding.workoutNotes)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            .padding()
+            .padding(.bottom, 30)
+        }
+    }
+
     /// The round clock: the biggest thing on the screen while training.
     private var liveClock: some View {
         VStack(spacing: 6) {
@@ -1227,17 +1380,17 @@ struct LiveWorkoutView: View {
                     Label(session.isRestPeriod ? "Skip rest" : "End round",
                           systemImage: session.isRestPeriod ? "forward.fill" : "bell.fill")
                         .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .frame(maxWidth: .infinity, minHeight: 56)
                         .background(Theme.raised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-            HoldToEndButton { showingFinishConfirm = true }
+            HoldToEndButton(height: 56) { showingFinishConfirm = true }
         }
         .padding(.horizontal)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
         .background(.bar)
     }
 
@@ -1601,4 +1754,29 @@ struct PlanRunnerCard: View {
 struct PlyoChoice: Identifiable {
     let variant: PlyoVariant
     var id: String { variant.rawValue }
+}
+
+
+/// The bag coach's current call, one line on the fight clock page.
+struct BagCallStrip: View {
+    @ObservedObject var audio: AudioCoachEngine
+    let isComplete: Bool
+
+    var body: some View {
+        let text: String = {
+            if isComplete { return "Session complete" }
+            if !audio.comboTokens.isEmpty { return audio.comboTokens.joined(separator: " · ") }
+            return audio.bagStatus.isEmpty ? "Hands up" : audio.bagStatus.capitalized
+        }()
+        Text(text)
+            .font(.system(.title2, design: .rounded).weight(.heavy))
+            .foregroundStyle(audio.bagStatus.contains("REST") ? Color.cyan : Color.orange)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .minimumScaleFactor(0.6)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .padding(.horizontal, 12)
+            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityLabel("Coach: \(text)")
+    }
 }

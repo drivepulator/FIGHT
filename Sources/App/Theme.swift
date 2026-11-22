@@ -67,6 +67,7 @@ struct FightPrimaryButtonStyle: ButtonStyle {
 struct HoldToEndButton: View {
     var title = "Hold to end"
     var holdSeconds: Double = 1.0
+    var height: CGFloat = 64
     let action: () -> Void
 
     @State private var progress: CGFloat = 0
@@ -84,7 +85,7 @@ struct HoldToEndButton: View {
                 .font(.headline)
                 .foregroundStyle(.primary)
         }
-        .frame(maxWidth: .infinity, minHeight: 64)
+        .frame(maxWidth: .infinity, minHeight: height)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(Rectangle())
         .onLongPressGesture(minimumDuration: holdSeconds, maximumDistance: 40) {
