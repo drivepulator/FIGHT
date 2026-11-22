@@ -66,113 +66,93 @@ struct FightPrimaryButtonStyle: ButtonStyle {
 /// Press and hold to end, so a glove can't stop a session by accident.
 struct HoldToEndButton: View {
     var title = "Hold to end"
-    /// Whole seconds to hold; the button counts them down.
-    var holdSeconds = 3
     var height: CGFloat = 56
     let action: () -> Void
 
-    /// True while a finger is on the button. Resets by itself when the touch ends or is
-    /// cancelled, so the countdown can never finish without a finger on it.
+    /// The countdown lives outside the looks, so redraws can't reset it.
+    @StateObject private var hold = HoldCountdown(seconds: 3)
+    /// True while a finger is on the button. Resets by itself when the touch ends or is cancelled.
     @GestureState private var pressing = false
     @State private var progress: CGFloat = 0
-    /// Seconds left while held (3, 2, 1); nil when not held.
-    @State private var remaining: Int?
-    @State private var countdown: Task<Void, Never>?
-    @State private var ended = 0
+
+    private var tall: Bool { height >= 90 }
 
     var body: some View {
-        Group {
-            if let left = remaining {
-                // Held: a big countdown, so you know exactly when it ends.
-                VStack(spacing: 2) {
-                    Text("\(left)")
-                        .font(Theme.number(height >= 90 ? 48 : 28))
-                        .contentTransition(.numericText(countsDown: true))
-                    if height >= 90 {
-                        Text("Ending… let go to keep going")
-                            .font(.caption.weight(.semibold))
-                            .multilineTextAlignment(.center)
+        // Every piece is always there; holding only fades between them. Nothing is created or
+        // removed under your finger (that cancelled the touch before).
+        ZStack {
+            Group {
+                if tall {
+                    VStack(spacing: 10) {
+                        Image(systemName: "stop.fill").font(.system(size: 32, weight: .bold))
+                        Text(title).font(.title3.weight(.bold))
                     }
+                } else {
+                    Label(title, systemImage: "stop.fill").font(.headline)
                 }
-            } else if height >= 90 {
-                // Tall button: big icon over the words, easy to find with a glove.
-                VStack(spacing: 10) {
-                    Image(systemName: "stop.fill").font(.system(size: 32, weight: .bold))
-                    Text(title).font(.title3.weight(.bold))
-                }
-            } else {
-                Label(title, systemImage: "stop.fill")
-                    .font(.headline)
+            }
+            .opacity(hold.isHolding ? 0 : 1)
+
+            VStack(spacing: 2) {
+                Text("\(hold.remaining ?? hold.seconds)")
+                    .font(Theme.number(tall ? 48 : 28))
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(.default, value: hold.remaining)
+                Text("Ending… let go to keep going")
+                    .font(.caption.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .opacity(tall ? 1 : 0)
+                    .frame(height: tall ? nil : 0)
+            }
+            .opacity(hold.isHolding ? 1 : 0)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        // The fill sits behind the label at the label's own size, so the button never grows.
+        .background(alignment: .leading) {
+            GeometryReader { g in
+                Theme.red.opacity(0.4)
+                    .frame(width: g.size.width * progress)
             }
         }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
-            // The fill sits behind the label at the label's own size, so the button never grows.
-            .background(alignment: .leading) {
-                GeometryReader { g in
-                    Theme.red.opacity(0.4)
-                        .frame(width: g.size.width * progress)
-                }
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Theme.red, lineWidth: 2.5)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                .updating($pressing) { _, state, _ in state = true }
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Theme.red, lineWidth: 2.5)
         )
-        .onChange(of: pressing) { _, isPressing in
-            if isPressing { startCountdown() } else { stopCountdown() }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        // A fixed touch layer on top: the press lands here and this layer never changes.
+        .overlay {
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                        .updating($pressing) { _, state, _ in state = true }
+                )
         }
+        .onChange(of: pressing) { _, isPressing in
+            if isPressing {
+                hold.onComplete = action
+                hold.press()
+                withAnimation(.linear(duration: Double(hold.seconds))) { progress = 1 }
+            } else {
+                hold.release()
+                withAnimation(.easeOut(duration: 0.2)) { progress = 0 }
+            }
+        }
+        .onChange(of: hold.completions) { _, _ in progress = 0 }
         // A firm tap on every second of the countdown, and a success buzz when it ends.
-        .sensoryFeedback(trigger: remaining) { _, new in
+        .sensoryFeedback(trigger: hold.remaining) { _, new in
             guard let new else { return nil }
             return .impact(weight: .heavy, intensity: new == 1 ? 1.0 : 0.75)
         }
-        .sensoryFeedback(.success, trigger: ended)
+        .sensoryFeedback(.success, trigger: hold.completions)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("End workout")
-        .accessibilityHint("Press and hold for \(holdSeconds) seconds")
+        .accessibilityHint("Press and hold for \(hold.seconds) seconds")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
-    }
-
-    private func startCountdown() {
-        countdown?.cancel()
-        remaining = holdSeconds
-        withAnimation(.linear(duration: Double(holdSeconds))) { progress = 1 }
-        let total = holdSeconds
-        countdown = Task { @MainActor in
-            for left in stride(from: total - 1, through: 0, by: -1) {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled { return }
-                if left == 0 {
-                    finish()
-                    return
-                }
-                withAnimation { remaining = left }
-            }
-        }
-    }
-
-    private func finish() {
-        countdown = nil
-        remaining = nil
-        progress = 0
-        ended += 1
-        action()
-    }
-
-    private func stopCountdown() {
-        countdown?.cancel()
-        countdown = nil
-        remaining = nil
-        withAnimation(.easeOut(duration: 0.2)) { progress = 0 }
     }
 }
 

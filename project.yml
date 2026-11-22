@@ -76,6 +76,7 @@ targets:
       - path: Sources/App/Encouragement.swift
       - path: Sources/App/RouteMath.swift
       - path: Sources/App/WorkoutMenu.swift
+      - path: Sources/App/HoldCountdown.swift
       - path: Sources/PlanKit
     settings:
       base:
