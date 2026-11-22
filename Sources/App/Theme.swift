@@ -67,26 +67,30 @@ struct FightPrimaryButtonStyle: ButtonStyle {
 struct HoldToEndButton: View {
     var title = "Hold to end"
     var holdSeconds: Double = 1.0
-    var height: CGFloat = 64
+    var height: CGFloat = 56
     let action: () -> Void
 
     @State private var progress: CGFloat = 0
     @State private var holding = false
 
     var body: some View {
-        ZStack {
-            GeometryReader { g in
-                Theme.red.opacity(0.35)
-                    .frame(width: g.size.width * progress)
+        Label(holding ? "Keep holding…" : title, systemImage: "stop.fill")
+            .font(.headline)
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            // The fill sits behind the label at the label's own size, so the button never grows.
+            .background(alignment: .leading) {
+                GeometryReader { g in
+                    Theme.red.opacity(0.35)
+                        .frame(width: g.size.width * progress)
+                }
             }
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Theme.red, lineWidth: 2)
-            Label(holding ? "Keep holding…" : title, systemImage: "stop.fill")
-                .font(.headline)
-                .foregroundStyle(.primary)
-        }
-        .frame(maxWidth: .infinity, minHeight: height)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Theme.red, lineWidth: 2)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
         .onLongPressGesture(minimumDuration: holdSeconds, maximumDistance: 40) {
             holding = false

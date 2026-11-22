@@ -1380,14 +1380,16 @@ struct LiveWorkoutView: View {
                     Label(session.isRestPeriod ? "Skip rest" : "End round",
                           systemImage: session.isRestPeriod ? "forward.fill" : "bell.fill")
                         .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
             HoldToEndButton(height: 56) { showingFinishConfirm = true }
         }
+        .frame(height: 56)
         .padding(.horizontal)
         .padding(.top, 8)
         .padding(.bottom, 2)
