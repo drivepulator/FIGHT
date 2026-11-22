@@ -979,27 +979,7 @@ final class WorkoutSession {
         activityTrail = []
         lastActivityTotal = 0
         strapLostSince = nil
-        if profile.trackHeadMovement {
-            headMotion.start()
-            headMotion.trackingChin = roundTimerEnabled
-            headMotion.onJump = { [weak self] cm in self?.recordJump(cm) }
-            if profile.nodToStart {
-                headMotion.onNod = { [weak self] in self?.handleNod() }
-            } else {
-                headMotion.onNod = nil
-            }
-        }
-        audio.onInterruptionBegan = { [weak self] in
-            guard Self.pausesForCalls else { return }
-            self?.pause(forCall: true)
-        }
-        let countHits = profile.countBagHits && bagEnabled
-        audio.countBagHits = countHits
-        if countHits {
-            audio.onBagHit = { [weak self] in self?.bagHits += 1 }
-        } else {
-            audio.onBagHit = nil
-        }
+        engageSensors()
         runningPlan = queuedPlan
         queuedPlan = nil
         planBlockIndex = 0
@@ -1035,12 +1015,85 @@ final class WorkoutSession {
         }
         startLiveActivity()
 
+        startClock()
+    }
+
+    /// Head tracking, nods, call pausing and bag-hit counting for a live session.
+    private func engageSensors() {
+        if profile.trackHeadMovement {
+            headMotion.start()
+            headMotion.trackingChin = roundTimerEnabled
+            headMotion.onJump = { [weak self] cm in self?.recordJump(cm) }
+            if profile.nodToStart {
+                headMotion.onNod = { [weak self] in self?.handleNod() }
+            } else {
+                headMotion.onNod = nil
+            }
+        }
+        audio.onInterruptionBegan = { [weak self] in
+            guard Self.pausesForCalls else { return }
+            self?.pause(forCall: true)
+        }
+        let countHits = profile.countBagHits && bagEnabled
+        audio.countBagHits = countHits
+        if countHits {
+            audio.onBagHit = { [weak self] in self?.bagHits += 1 }
+        } else {
+            audio.onBagHit = nil
+        }
+    }
+
+    private func startClock() {
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
         saveDraft()
+    }
+
+    // MARK: Resume a session that was ended by mistake
+
+    /// The session just ended was a plan (plans can't be picked up again).
+    @ObservationIgnored private var finishedWasPlan = false
+
+    /// "Resume" on the summary: the session you just ended can carry on, within 15 minutes.
+    /// Not for plans or the threshold test (the test may already have changed your zones).
+    var canResumeFinished: Bool {
+        guard let w = finishedWorkout, !isRecording else { return false }
+        return !finishedWasPlan && w.category != .lthrTest && Date().timeIntervalSince(w.endDate) < 15 * 60
+    }
+
+    /// Un-end the session: the saved copy is removed and the clock carries on from where it
+    /// stopped. The time in between doesn't count.
+    func resumeFinished() {
+        guard canResumeFinished, let w = finishedWorkout, let store else { return }
+        pendingHealthSave = nil
+        store.permanentlyDelete(w)
+        if unsavedWorkout?.id == w.id { unsavedWorkout = nil }
+        finishedWorkout = nil
+        showingSummary = false
+        workoutNotes = w.notes
+        let now = Date()
+        pausedTotal += max(0, now.timeIntervalSince(w.endDate))
+        isPaused = false
+        pausedForCall = false
+        pausedAt = nil
+        draftID = UUID()
+        draftSamplesWritten = 0
+        lastTick = now
+        lastDraftSave = now
+        lastActivityState = nil
+        isRecording = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        engageSensors()
+        if w.run != nil { run.resumeAfterFinish() }
+        audio.prepareForWorkout(settings: profile.audioCoach)
+        audio.announceCoachingCue("Back to work.", enabled: true)
+        if roundTimerEnabled && !isRestPeriod { audio.playRoundStartBell() }
+        if bagEnabled && !bagSessionComplete { startBagCoach() }
+        startLiveActivity()
+        startClock()
     }
 
     private func startBagCoach(prefs override: BagPreferences? = nil) {
@@ -1166,6 +1219,7 @@ final class WorkoutSession {
         }
 
         speakDebrief(saved, history: store.workouts, profile: current)
+        finishedWasPlan = isRunningPlan
         finishedWorkout = saved
         workoutNotes = ""
         activePlan = nil

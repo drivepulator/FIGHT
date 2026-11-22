@@ -40,14 +40,21 @@ struct LiveWorkoutView: View {
                     GeometryReader { g in
                         let controls = min(max(150, g.size.height * 0.27), 240)
                         VStack(spacing: 0) {
-                            ScrollView {
-                                VStack(spacing: 16) {
-                                    liveMainPage(currentZone: currentZone)
-                                        .frame(height: max(320, g.size.height - controls))
-                                    liveDetailsContent(profile: profile)
+                            // Swipe between condensed pages: clock, heart rate, coach, notes.
+                            TabView(selection: $livePage) {
+                                liveMainPage(currentZone: currentZone)
+                                    .tag(0)
+                                fitPage { liveHeartPage(currentZone: currentZone, profile: profile) }
+                                    .tag(1)
+                                if hasCoachPage {
+                                    fitPage { liveCoachPage }
+                                        .tag(2)
                                 }
+                                fitPage { liveNotesPage }
+                                    .tag(3)
                             }
-                            .scrollIndicators(.hidden)
+                            .tabViewStyle(.page(indexDisplayMode: .always))
+                            .indexViewStyle(.page(backgroundDisplayMode: .interactive))
                             liveControlBar(height: controls)
                         }
                     }
@@ -216,6 +223,20 @@ struct LiveWorkoutView: View {
                                 ToolbarItem(placement: .topBarTrailing) {
                                     Button("Done") { session.showingSummary = false }
                                         .fontWeight(.semibold)
+                                }
+                                ToolbarItem(placement: .bottomBar) {
+                                    if session.canResumeFinished {
+                                        Button {
+                                            session.resumeFinished()
+                                        } label: {
+                                            Label("Resume workout", systemImage: "play.fill")
+                                                .labelStyle(.titleAndIcon)
+                                        }
+                                        .tint(Theme.red)
+                                    }
+                                }
+                                ToolbarItem(placement: .bottomBar) {
+                                    Spacer()
                                 }
                                 ToolbarItem(placement: .bottomBar) {
                                     Button(role: .destructive) {
@@ -1139,14 +1160,117 @@ struct LiveWorkoutView: View {
             liveCallLine
             liveHeartStrip(currentZone: currentZone)
             liveWarning
-            Label("Scroll for chart, combos and notes", systemImage: "chevron.down")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
         }
         .padding(.horizontal)
         .padding(.top, 4)
-        .padding(.bottom, 8)
+        .padding(.bottom, 40)
+    }
+
+    // MARK: Live: swipe pages
+
+    /// A page that fits the screen; it only scrolls if a small phone can't fit it.
+    private func fitPage<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        let c = content()
+        return ViewThatFits(in: .vertical) {
+            c.padding(.horizontal)
+                .padding(.top, 8)
+                .padding(.bottom, 40)
+                .frame(maxHeight: .infinity, alignment: .top)
+            ScrollView {
+                c.padding(.horizontal)
+                    .padding(.top, 8)
+                    .padding(.bottom, 40)
+            }
+        }
+    }
+
+    private func pageTitle(_ title: String, _ icon: String) -> some View {
+        Label(title, systemImage: icon)
+            .font(.headline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var hasCoachPage: Bool {
+        session.run.isActive || session.isRunningPlan || session.bagEnabled || planBagBlockActive
+            || session.selectedCategory == .lthrTest || session.activePlan != nil
+    }
+
+    /// Heart rate: the band, the chart, and recovery moments.
+    private func liveHeartPage(currentZone: HeartRateZoneInfo, profile: AthleteProfile) -> some View {
+        VStack(spacing: 12) {
+            pageTitle("Heart rate", "heart.fill")
+            LiveZoneBand(bpm: bleManager.currentBPM,
+                         zoneName: currentZone.name,
+                         color: currentZone.color,
+                         average: session.liveAverageBPM,
+                         maximum: session.liveMaxBPM,
+                         calories: Int(session.activeCalories + session.bmrCalories))
+            liveSparklineCard(profile: profile)
+            if let a = session.liveAlpha1 {
+                Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
+                      systemImage: "waveform.path.ecg")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(a >= 0.75 ? .green : .orange)
+            }
+            if let autoBanner = session.latestAutoHRRBanner {
+                Label(autoBanner, systemImage: "arrow.down.heart.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.cyan)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    /// Coach: the run, the plan, the bag calls or the test, whichever this session has.
+    private var liveCoachPage: some View {
+        VStack(spacing: 12) {
+            pageTitle(session.run.isActive ? "Roadwork" : "Coach", session.run.isActive ? "figure.run" : "megaphone.fill")
+            if session.run.isActive {
+                RunLiveCard(run: session.run)
+            }
+            if let plan = session.activePlan {
+                planBanner(plan)
+            }
+            if session.isRunningPlan {
+                PlanRunnerCard()
+            }
+            if session.bagEnabled || planBagBlockActive {
+                BagComboCard(audio: session.audio, round: session.currentRound,
+                             totalRounds: session.roundsLimit ?? session.totalBagRounds,
+                             isComplete: session.bagSessionComplete)
+            }
+            if session.selectedCategory == .lthrTest {
+                lthrFieldTestCard
+            }
+        }
+    }
+
+    /// Notes: records, ghost, the session totals and your corner note.
+    private var liveNotesPage: some View {
+        VStack(spacing: 12) {
+            pageTitle("Session", "list.bullet")
+            HStack {
+                BigNumber(value: formatDuration(session.elapsedSeconds), label: "total", size: 22)
+                BigNumber(value: "\(Int(session.activeCalories))", label: "active kcal", size: 22)
+                BigNumber(value: "\(session.currentRound)", label: session.roundTimerEnabled ? "round" : "rounds", size: 22)
+            }
+            .card()
+            if let record = session.liveRecordBanner {
+                Label(record, systemImage: "trophy.fill")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+            }
+            if session.selectedGhost != nil {
+                ghostSimulatorCard
+            }
+            TextField("Corner note…", text: sessionBinding.workoutNotes, axis: .vertical)
+                .lineLimit(2...4)
+                .textFieldStyle(.roundedBorder)
+        }
     }
 
     @ViewBuilder
