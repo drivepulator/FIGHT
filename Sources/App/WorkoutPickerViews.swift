@@ -165,18 +165,8 @@ struct ReadyCard: View {
                 .accessibilityLabel("Clear")
             }
             Button {
-                guard session.bagEnabled else {
-                    session.begin()
-                    onStarted()
-                    return
-                }
-                preparingVoice = true
-                Task {
-                    await session.audio.prepareVocabulary(prefs: session.bagPrefs)
-                    preparingVoice = false
-                    session.begin()
-                    onStarted()
-                }
+                session.begin()
+                onStarted()
             } label: {
                 Group {
                     if preparingVoice {
@@ -427,20 +417,8 @@ private struct ReadyView: View {
                 .foregroundStyle(.secondary)
                 Button {
                     session.choose(option, length: length)
-                    guard option.bagCoach else {
-                        session.begin()
-                        finish()
-                        return
-                    }
-                    // The coach's voice has to be ready before the first combo (first time, or after
-                    // changing stance or voice). Usually instant: lines are saved on the phone.
-                    preparingVoice = true
-                    Task {
-                        await session.audio.prepareVocabulary(prefs: session.bagPrefs)
-                        preparingVoice = false
-                        session.begin()
-                        finish()
-                    }
+                    session.begin()
+                    finish()
                 } label: {
                     Group {
                         if preparingVoice {

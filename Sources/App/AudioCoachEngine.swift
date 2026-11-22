@@ -98,6 +98,9 @@ final class AudioCoachEngine: NSObject, ObservableObject {
 
     /// A phone call, Siri or another app taking the audio stops the engine; so does plugging in or
     /// unplugging headphones. Bring bells, voice and bag-hit counting back as soon as it's over.
+    /// Called when a phone call (or another app) interrupts audio during a session.
+    var onInterruptionBegan: (@MainActor () -> Void)?
+
     private func observeInterruptions() {
         let center = NotificationCenter.default
         center.addObserver(forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
@@ -107,6 +110,8 @@ final class AudioCoachEngine: NSObject, ObservableObject {
                 guard let self else { return }
                 if type == .began {
                     self.wasRunningBeforeInterruption = self.engine.isRunning
+                    // A phone call (or similar) took the audio: let the session pause.
+                    if self.audioEnabled { self.onInterruptionBegan?() }
                 } else if self.wasRunningBeforeInterruption {
                     self.resumeAfterInterruption()
                 }

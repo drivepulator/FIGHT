@@ -99,16 +99,7 @@ struct TodayCard: View {
             return
         }
         session.apply(p)
-        guard session.bagEnabled else {
-            session.begin()
-            return
-        }
-        preparingVoice = true
-        Task {
-            await session.audio.prepareVocabulary(prefs: session.bagPrefs)
-            preparingVoice = false
-            session.begin()
-        }
+        session.begin()
     }
 
     private func consumeCheckRequest() {

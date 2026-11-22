@@ -1109,8 +1109,18 @@ struct LiveWorkoutView: View {
     /// Everything that matters mid-round, always on screen: round, clock, heart rate.
     private func liveMainPage(currentZone: HeartRateZoneInfo) -> some View {
         VStack(spacing: 12) {
+            if session.isPaused {
+                Label(session.pausedForCall ? "Paused for a call. Resume when you're ready." : "Paused",
+                      systemImage: session.pausedForCall ? "phone.fill" : "pause.fill")
+                    .font(.headline)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
             liveHeader
             liveBigNumber
+                .opacity(session.isPaused ? 0.4 : 1)
                 .frame(maxHeight: .infinity)
             liveCallLine
             liveHeartStrip(currentZone: currentZone)
@@ -1374,45 +1384,78 @@ struct LiveWorkoutView: View {
     private func liveControlBar(height: CGFloat) -> some View {
         let buttonHeight = max(56, height - 32)
         return HStack(spacing: 12) {
-            if session.roundTimerEnabled && !session.bagSessionComplete && session.isRestPeriod && !session.isInPlanTransition {
+            if session.isPaused {
                 Button {
-                    session.extendRest()
+                    session.resume()
                 } label: {
                     VStack(spacing: 10) {
-                        Image(systemName: "plus.circle.fill")
+                        Image(systemName: "play.fill")
                             .font(.system(size: 32, weight: .bold))
-                        Text("30 s")
+                        Text("Resume")
                             .font(.title3.weight(.bold))
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: buttonHeight)
-                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add 30 seconds of rest")
-            }
-            if session.roundTimerEnabled && !session.bagSessionComplete {
-                Button {
-                    if session.isRestPeriod {
-                        session.skipRest()
-                    } else {
-                        session.endWorkPhase(manual: true)
+                .buttonStyle(FightPrimaryButtonStyle())
+            } else {
+                if !(session.roundTimerEnabled && session.isRestPeriod) {
+                    Button {
+                        session.pause()
+                    } label: {
+                        VStack(spacing: 10) {
+                            Image(systemName: "pause.fill")
+                                .font(.system(size: 32, weight: .bold))
+                            Text("Pause")
+                                .font(.title3.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: buttonHeight)
+                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(Rectangle())
                     }
-                } label: {
-                    VStack(spacing: 10) {
-                        Image(systemName: session.isRestPeriod ? "forward.fill" : "bell.fill")
-                            .font(.system(size: 32, weight: .bold))
-                        Text(session.isRestPeriod ? "Skip rest" : "End round")
-                            .font(.title3.weight(.bold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: buttonHeight)
-                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .sensoryFeedback(.impact(weight: .heavy), trigger: session.isRestPeriod)
+                if session.roundTimerEnabled && !session.bagSessionComplete && session.isRestPeriod && !session.isInPlanTransition {
+                    Button {
+                        session.extendRest()
+                    } label: {
+                        VStack(spacing: 10) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 32, weight: .bold))
+                            Text("30 s")
+                                .font(.title3.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: buttonHeight)
+                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add 30 seconds of rest")
+                }
+                if session.roundTimerEnabled && !session.bagSessionComplete {
+                    Button {
+                        if session.isRestPeriod {
+                            session.skipRest()
+                        } else {
+                            session.endWorkPhase(manual: true)
+                        }
+                    } label: {
+                        VStack(spacing: 10) {
+                            Image(systemName: session.isRestPeriod ? "forward.fill" : "bell.fill")
+                                .font(.system(size: 32, weight: .bold))
+                            Text(session.isRestPeriod ? "Skip rest" : "End round")
+                                .font(.title3.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: buttonHeight)
+                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .sensoryFeedback(.impact(weight: .heavy), trigger: session.isRestPeriod)
+                }
             }
             HoldToEndButton(height: buttonHeight) { showingFinishConfirm = true }
         }

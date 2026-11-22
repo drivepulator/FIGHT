@@ -28,12 +28,12 @@ struct RootView: View {
             }
         }
         .overlay {
-            if session.getReadyRemaining != nil {
+            if session.getReadyRemaining != nil || session.startWhenVoiceReady {
                 GetReadyView()
                     .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.2), value: session.getReadyRemaining == nil)
+        .animation(.easeOut(duration: 0.2), value: session.getReadyRemaining == nil && !session.startWhenVoiceReady)
         .onChange(of: session.isRecording) { _, recording in
             if recording { navigation.selectedTab = .corner }
         }
@@ -170,10 +170,22 @@ struct GetReadyView: View {
                     Spacer()
                     Text("Gloves on. Square up.")
                         .font(.title2.weight(.bold))
-                    Text("\(left)")
-                        .font(Theme.number(min(200, g.size.height * 0.28)))
-                        .contentTransition(.numericText(countsDown: true))
-                        .animation(.default, value: left)
+                    if session.getReadyRemaining == nil {
+                        // Countdown done, voice still loading (first time after changing it).
+                        ProgressView()
+                            .controlSize(.large)
+                            .frame(height: min(200, g.size.height * 0.28))
+                    } else {
+                        Text("\(left)")
+                            .font(Theme.number(min(200, g.size.height * 0.28)))
+                            .contentTransition(.numericText(countsDown: true))
+                            .animation(.default, value: left)
+                    }
+                    if session.preparingVoice {
+                        Label("Preparing the coach's voice…", systemImage: "waveform")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                     Text(session.setupSummary)
                         .font(.headline)
                         .foregroundStyle(.secondary)

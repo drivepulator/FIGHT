@@ -16,6 +16,7 @@ struct ProfileSettingsView: View {
     @State private var showingSoreness = false
     @State private var showingWarmUp = false
     @AppStorage("fight.getReadySeconds") private var getReadySeconds = 10
+    @AppStorage("fight.pauseOnCalls") private var pauseOnCalls = true
 
     enum ActiveWheelPicker: Hashable {
         case age, weight, height, targetWeight, restingHR, maxHR, lthr
@@ -133,8 +134,11 @@ struct ProfileSettingsView: View {
                     } label: {
                         Label("Get ready before the bell", systemImage: "timer")
                     }
+                    Toggle(isOn: $pauseOnCalls) {
+                        Label("Pause for phone calls", systemImage: "phone.arrow.down.left")
+                    }
                 } footer: {
-                    Text("Corner coach pushes you when your pace drops and tells you to breathe when you're redlining. Get ready gives you time to glove up before rounds and bag work; skip it with Start now or a nod.")
+                    Text("Corner coach pushes you when your pace drops and tells you to breathe when you're redlining. Get ready gives you time to glove up before rounds and bag work; skip it with Start now or a nod. A call pauses the clock until you tap Resume.")
                 }
 
                 Group {

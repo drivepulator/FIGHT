@@ -248,9 +248,24 @@ final class WorkoutSession {
     // MARK: Private bookkeeping
     private var draftID = UUID()
     @ObservationIgnored private var timer: Timer?
+    /// The clock is stopped (phone call, coach stopped the drill). Nothing is counted while paused.
+    private(set) var isPaused = false
+    /// Paused because a call came in (shown on screen so you know why).
+    private(set) var pausedForCall = false
+    @ObservationIgnored private var pausedAt: Date?
+    @ObservationIgnored private var pausedTotal: TimeInterval = 0
+    /// Pause automatically when a phone call comes in (set in You).
+    static var pausesForCalls: Bool {
+        UserDefaults.standard.object(forKey: "fight.pauseOnCalls") as? Bool ?? true
+    }
+
     /// Seconds left of "Gloves on" before the bell; nil when not getting ready.
     private(set) var getReadyRemaining: Int?
     @ObservationIgnored private var getReadyTimer: Timer?
+    /// The bag coach's voice is being prepared (usually instant; first time after a change, a few seconds).
+    private(set) var preparingVoice = false
+    /// Start as soon as the voice is ready (the countdown finished first).
+    private(set) var startWhenVoiceReady = false
     /// The get-ready countdown length chosen in You (0 = off).
     static var getReadySeconds: Int {
         UserDefaults.standard.object(forKey: "fight.getReadySeconds") as? Int ?? 10
@@ -807,10 +822,24 @@ final class WorkoutSession {
     /// Start from a button: rounds and bag work get a short "gloves on" countdown first,
     /// so the first call doesn't come while you're still strapping up.
     func begin() {
-        guard !isRecording, getReadyRemaining == nil else { return }
+        guard !isRecording, getReadyRemaining == nil, !startWhenVoiceReady else { return }
+        // The coach's voice gets ready while you glove up, instead of making you wait first.
+        if bagEnabled && !preparingVoice {
+            preparingVoice = true
+            let prefs = bagPrefs
+            Task { [weak self] in
+                guard let self else { return }
+                await self.audio.prepareVocabulary(prefs: prefs)
+                self.preparingVoice = false
+                if self.startWhenVoiceReady {
+                    self.startWhenVoiceReady = false
+                    self.startWorkout()
+                }
+            }
+        }
         let lead = Self.getReadySeconds
         guard lead > 0, bagEnabled || roundTimerEnabled, queuedPlan == nil, !tracksGPS else {
-            startWorkout()
+            startOrWaitForVoice()
             return
         }
         getReadyRemaining = lead
@@ -846,12 +875,21 @@ final class WorkoutSession {
         getReadyTimer = nil
         getReadyRemaining = nil
         headMotion.onNod = nil
-        startWorkout()
+        startOrWaitForVoice()
+    }
+
+    private func startOrWaitForVoice() {
+        if preparingVoice {
+            startWhenVoiceReady = true
+        } else {
+            startWorkout()
+        }
     }
 
     /// Back out before the bell: nothing is recorded.
     func cancelGetReady() {
-        guard getReadyRemaining != nil else { return }
+        guard getReadyRemaining != nil || startWhenVoiceReady else { return }
+        startWhenVoiceReady = false
         getReadyTimer?.invalidate()
         getReadyTimer = nil
         getReadyRemaining = nil
@@ -874,6 +912,10 @@ final class WorkoutSession {
             deleteDraft()
         }
         rememberSetup()
+        isPaused = false
+        pausedForCall = false
+        pausedAt = nil
+        pausedTotal = 0
         draftID = UUID()
         draftSamplesWritten = 0
         samples.removeAll()
@@ -946,6 +988,10 @@ final class WorkoutSession {
                 headMotion.onNod = nil
             }
         }
+        audio.onInterruptionBegan = { [weak self] in
+            guard Self.pausesForCalls else { return }
+            self?.pause(forCall: true)
+        }
         let countHits = profile.countBagHits && bagEnabled
         audio.countBagHits = countHits
         if countHits {
@@ -1000,7 +1046,7 @@ final class WorkoutSession {
         let context = BagLoopContext(
             isWorkPhase: { [weak self] in
                 guard let self else { return false }
-                return self.isRecording && !self.bagSessionComplete && !self.isInPlanTransition && !self.planComplete
+                return self.isRecording && !self.isPaused && !self.bagSessionComplete && !self.isInPlanTransition && !self.planComplete
                     && (!self.roundTimerEnabled || !self.isRestPeriod)
             },
             roundProgress: { [weak self] in
@@ -1040,6 +1086,11 @@ final class WorkoutSession {
         timer = nil
         lastTick = nil
         isRecording = false
+        isPaused = false
+        pausedForCall = false
+        pausedAt = nil
+        audio.onInterruptionBegan = nil
+        run.holdDistance = false
         UIApplication.shared.isIdleTimerDisabled = false
         headMotion.stop()
         headMotion.onNod = nil
@@ -1162,7 +1213,9 @@ final class WorkoutSession {
         let dt = max(0, now.timeIntervalSince(lastTick ?? now))
         let creditedDT = min(dt, 5)
         lastTick = now
-        elapsedSeconds = now.timeIntervalSince(start)
+        // Paused: the clock, rounds, calories and heart rate all stand still.
+        if isPaused { return }
+        elapsedSeconds = now.timeIntervalSince(start) - pausedTotal
 
         let bpm = currentBPM
         let p = profile
@@ -1512,6 +1565,36 @@ final class WorkoutSession {
         phaseElapsed = currentPhaseTarget
     }
 
+    /// Stop the clock. Bag calls, cues, calories and heart-rate recording all wait.
+    func pause(forCall: Bool = false) {
+        guard isRecording, !isPaused else { return }
+        isPaused = true
+        pausedForCall = forCall
+        pausedAt = Date()
+        run.holdDistance = true
+        if !forCall { audio.announceCoachingCue("Paused.", enabled: true) }
+        lastActivityState = nil
+        updateLiveActivity()
+        saveDraft()
+    }
+
+    /// Back to work: the clock carries on from where it stopped.
+    func resume() {
+        guard isRecording, isPaused else { return }
+        let now = Date()
+        if let at = pausedAt { pausedTotal += now.timeIntervalSince(at) }
+        pausedAt = nil
+        isPaused = false
+        pausedForCall = false
+        lastTick = now
+        run.holdDistance = false
+        audio.prepareForWorkout(settings: profile.audioCoach)
+        audio.announceCoachingCue("Back to work.", enabled: true)
+        if roundTimerEnabled && !isRestPeriod { audio.playRoundStartBell() }
+        lastActivityState = nil
+        updateLiveActivity()
+    }
+
     /// Water, gum shield, retape: 30 more seconds on this rest.
     func extendRest(by seconds: TimeInterval = 30) {
         guard isRecording, roundTimerEnabled, isRestPeriod, !isInPlanTransition else { return }
@@ -1721,13 +1804,14 @@ final class WorkoutSession {
         lastActivityPush = now
         let state = WorkoutActivityAttributes.ContentState(
             currentBPM: bpm, zoneNumber: z.number, zoneShortName: z.shortName, calories: Int(activeCalories),
-            workoutStartDate: startTime ?? now,
+            workoutStartDate: (startTime ?? now).addingTimeInterval(pausedTotal),
             isTimedRound: roundTimerEnabled || (isRunningPlan && !isInPlanTransition && !(currentBlock?.kind.isRoundBased ?? true)),
             roundNumber: isRunningPlan ? planBlockIndex + 1 : currentRound,
             isRest: isRestPeriod || isInPlanTransition,
             phaseEndDate: now.addingTimeInterval(isInPlanTransition ? (planTransitionRemaining ?? 0) : (roundTimerEnabled ? phaseRemaining : blockRemaining)),
             distanceText: run.isActive ? "\(RouteMath.distanceText(run.distanceM, imperial: run.imperial)) \(run.imperial ? "mi" : "km")" : nil,
-            paceText: run.isActive ? "\(RouteMath.paceText(run.currentPace)) /\(run.imperial ? "mi" : "km")" : nil
+            paceText: run.isActive ? "\(RouteMath.paceText(run.currentPace)) /\(run.imperial ? "mi" : "km")" : nil,
+            isPaused: isPaused
         )
         // Updates come at least every 15 s; if the app stops, the Lock Screen shows it as stale.
         Task { await activity.update(.init(state: state, staleDate: Date().addingTimeInterval(120))) }

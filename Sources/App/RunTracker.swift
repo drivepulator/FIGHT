@@ -27,6 +27,8 @@ final class RunTracker {
     private(set) var splits: [RunSplit] = []
     private(set) var imperial = false
     private(set) var permissionDenied = false
+    /// The workout is paused: keep tracking position but don't add distance.
+    @ObservationIgnored var holdDistance = false
 
     /// Called when a km (or mile) is completed.
     @ObservationIgnored var onSplit: (@MainActor (RunSplit) -> Void)?
@@ -185,6 +187,8 @@ final class RunTracker {
         let previous = filter.last
         guard filter.accept(p, accuracy: accuracy) else { return }
         lastFixAt = p.t
+        // Paused: remember where we are (so resuming doesn't add the gap) but count nothing.
+        if holdDistance { return }
         let speed = p.speed ?? previous.map { RouteMath.distance($0, p) / max(0.5, p.t - $0.t) } ?? 0
         _ = updatePause(speed: speed, t: p.t)
         points.append(p)

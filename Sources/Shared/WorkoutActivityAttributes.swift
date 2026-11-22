@@ -15,6 +15,8 @@ struct WorkoutActivityAttributes: ActivityAttributes {
         /// Runs: "5.02 km" and "5:28 /km" (nil for other workouts).
         var distanceText: String? = nil
         var paceText: String? = nil
+        /// The session is paused: show "Paused" instead of running clocks.
+        var isPaused: Bool? = nil
     }
 
     var athleteName: String

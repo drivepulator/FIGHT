@@ -25,7 +25,7 @@ struct FightApp: App {
             .task {
                 AppNavigation.shared = navigation
                 LiveActivityActions.handler = { [weak s = session] action in
-                    guard let s else { return }
+                    guard let s, !s.isPaused else { return }
                     if action == "endRound" { s.endWorkPhase(manual: true) }
                     if action == "skipRest" { s.skipRest() }
                 }

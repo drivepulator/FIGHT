@@ -41,7 +41,11 @@ struct FightLiveActivityWidget: Widget {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    if let distance = context.state.distanceText {
+                    if context.state.isPaused == true {
+                        Text("PAUSED")
+                            .font(.system(size: 24, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.orange)
+                    } else if let distance = context.state.distanceText {
                         Text(distance)
                             .font(.system(size: 28, weight: .heavy, design: .rounded).monospacedDigit())
                         Text(context.state.paceText ?? "")
@@ -92,7 +96,11 @@ struct FightLiveActivityWidget: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if let distance = context.state.distanceText {
+                    if context.state.isPaused == true {
+                        Text("PAUSED")
+                            .font(.headline.weight(.heavy))
+                            .foregroundStyle(.orange)
+                    } else if let distance = context.state.distanceText {
                         VStack(alignment: .trailing) {
                             Text(distance).font(.headline.monospacedDigit())
                             Text(context.state.paceText ?? "").font(.caption2.weight(.bold)).foregroundStyle(.orange)
@@ -126,7 +134,10 @@ struct FightLiveActivityWidget: Widget {
                         .font(.caption.weight(.bold).monospacedDigit())
                 }
             } compactTrailing: {
-                if let distance = context.state.distanceText {
+                if context.state.isPaused == true {
+                    Image(systemName: "pause.fill")
+                        .foregroundStyle(.orange)
+                } else if let distance = context.state.distanceText {
                     Text(distance)
                         .font(.caption.weight(.bold).monospacedDigit())
                         .frame(maxWidth: 64)
