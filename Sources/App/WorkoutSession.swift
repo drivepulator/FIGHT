@@ -1087,7 +1087,7 @@ final class WorkoutSession {
         isRecording = true
         UIApplication.shared.isIdleTimerDisabled = true
         engageSensors()
-        if w.run != nil { run.resumeAfterFinish() }
+        if tracksGPS { run.resumeAfterFinish() }
         audio.prepareForWorkout(settings: profile.audioCoach)
         audio.announceCoachingCue("Back to work.", enabled: true)
         if roundTimerEnabled && !isRestPeriod { audio.playRoundStartBell() }
@@ -1136,6 +1136,7 @@ final class WorkoutSession {
     }
 
     private func stopRecordingCommon() {
+        if isPaused, let at = pausedAt { pausedTotal += Date().timeIntervalSince(at) }
         timer?.invalidate()
         timer = nil
         lastTick = nil

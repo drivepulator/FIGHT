@@ -43,6 +43,7 @@ final class AppNavigation: ObservableObject {
     func run(_ plan: TrainingPlan) {
         planToRun = plan
         showingYou = false
+        showingStart = false
         selectedTab = .corner
     }
 

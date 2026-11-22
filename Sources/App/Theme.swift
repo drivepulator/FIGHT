@@ -71,6 +71,9 @@ struct HoldToEndButton: View {
     var height: CGFloat = 56
     let action: () -> Void
 
+    /// True while a finger is on the button. Resets by itself when the touch ends or is
+    /// cancelled, so the countdown can never finish without a finger on it.
+    @GestureState private var pressing = false
     @State private var progress: CGFloat = 0
     /// Seconds left while held (3, 2, 1); nil when not held.
     @State private var remaining: Int?
@@ -119,16 +122,12 @@ struct HoldToEndButton: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .contentShape(Rectangle())
-        .onLongPressGesture(minimumDuration: Double(holdSeconds), maximumDistance: 40) {
-            stopCountdown()
-            ended += 1
-            action()
-        } onPressingChanged: { pressing in
-            if pressing {
-                startCountdown()
-            } else {
-                stopCountdown()
-            }
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .updating($pressing) { _, state, _ in state = true }
+        )
+        .onChange(of: pressing) { _, isPressing in
+            if isPressing { startCountdown() } else { stopCountdown() }
         }
         // A firm tap on every second of the countdown, and a success buzz when it ends.
         .sensoryFeedback(trigger: remaining) { _, new in
@@ -147,13 +146,26 @@ struct HoldToEndButton: View {
         countdown?.cancel()
         remaining = holdSeconds
         withAnimation(.linear(duration: Double(holdSeconds))) { progress = 1 }
+        let total = holdSeconds
         countdown = Task { @MainActor in
-            for left in stride(from: holdSeconds - 1, through: 1, by: -1) {
+            for left in stride(from: total - 1, through: 0, by: -1) {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if Task.isCancelled { return }
+                if left == 0 {
+                    finish()
+                    return
+                }
                 withAnimation { remaining = left }
             }
         }
+    }
+
+    private func finish() {
+        countdown = nil
+        remaining = nil
+        progress = 0
+        ended += 1
+        action()
     }
 
     private func stopCountdown() {

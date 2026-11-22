@@ -133,7 +133,9 @@ final class RunTracker {
         let wasActive = isActive
         stop()
         guard wasActive, distanceM >= 50 || !points.isEmpty else { return nil }
-        let final = splitTracker.finish(distance: distanceM, moving: movingSeconds, altitude: lastAltitude)
+        // Work on a copy: the final partial split must not stay in the tracker in case the run is resumed.
+        var closing = splitTracker
+        let final = closing.finish(distance: distanceM, moving: movingSeconds, altitude: lastAltitude)
         let route = RouteMath.simplify(points)
         let summary = RunSummary(distanceM: distanceM, movingSeconds: movingSeconds, elevationGain: elevation.total,
                                  splits: final, source: source, imperial: imperial, hasRoute: route.count >= 2)
