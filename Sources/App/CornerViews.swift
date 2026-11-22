@@ -259,7 +259,8 @@ struct ScorecardHeader: View {
             HStack(spacing: 8) {
                 BigNumber(value: Self.clock(workout.duration), label: "time")
                 BigNumber(value: mid.0, label: mid.1)
-                BigNumber(value: "\(Int(workout.calories))", label: "kcal")
+                BigNumber(value: "\(Int(workout.calories))",
+                          label: workout.estimatedCalories >= 1 ? "kcal + ≈\(Int(workout.estimatedCalories)) est." : "kcal")
             }
             if rounds.count >= 2 {
                 let top = Double(rounds.map(\.avgBPM).max() ?? 1)

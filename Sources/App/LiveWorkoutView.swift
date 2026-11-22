@@ -1266,17 +1266,20 @@ struct LiveWorkoutView: View {
         let avg = session.liveAverageBPM
         let top = session.liveMaxBPM
         let target = session.hrTarget
+        // Strap off: an estimate, shown grey, dashed and marked "≈" so it can't pass for real.
+        let est = live ? nil : session.estimatedBPM
         return HStack(spacing: 12) {
             Image(systemName: "heart.fill")
                 .font(.title2)
                 .foregroundStyle(tint)
                 .symbolEffect(.pulse, isActive: live)
             VStack(alignment: .leading, spacing: 0) {
-                Text(live ? "\(bpm)" : "--")
+                Text(live ? "\(bpm)" : est.map { "≈\($0)" } ?? "--")
                     .font(Theme.number(44))
                     .contentTransition(.numericText())
                     .animation(.default, value: bpm)
                 Text(live ? (out > 0 ? "Above target" : out < 0 ? "Under target" : currentZone.name)
+                          : est != nil ? "Estimated · strap lost"
                           : (bleManager.isConnected ? "No signal" : "No strap · tap to connect"))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(tint)
@@ -1299,13 +1302,15 @@ struct LiveWorkoutView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.5), lineWidth: 1.5))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(tint.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: est != nil ? [6, 4] : [])))
         .contentShape(Rectangle())
         .onTapGesture {
             if !bleManager.isConnected { showingDeviceSheet = true }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(live ? "Heart rate \(bpm), \(currentZone.name). Average \(avg), max \(top)." : "No heart rate")
+        .accessibilityLabel(live ? "Heart rate \(bpm), \(currentZone.name). Average \(avg), max \(top)."
+                            : est.map { "Estimated heart rate about \($0). The strap isn't sending." } ?? "No heart rate")
     }
 
     /// One short line instead of a banner.

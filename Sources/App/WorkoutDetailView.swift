@@ -98,6 +98,9 @@ struct WorkoutDetailView: View {
                 ScorecardHeader(workout: workout) {
                     storyFocus = workout.run?.hasRoute == true ? .route : (workout.hasHeartRate ? .mainEvent : .profile)
                 }
+                if !workout.estimatedSamples.isEmpty {
+                    EstimatedHeartRateCard(workout: workout, realSamples: chartSamples)
+                }
                 if !workout.notes.isEmpty {
                     Text("\"\(workout.notes)\"")
                         .font(.subheadline)
@@ -905,5 +908,61 @@ struct PlanResultsCard: View {
                 ShareSheet(items: [file.url])
             }
         }
+    }
+}
+
+
+/// The stretch where the strap dropped out, kept clearly apart from the measured data.
+struct EstimatedHeartRateCard: View {
+    let workout: SavedWorkout
+    let realSamples: [HeartRatePoint]
+
+    private var estimatedAverage: Int {
+        let e = workout.estimatedSamples
+        return e.isEmpty ? 0 : e.map(\.bpm).reduce(0, +) / e.count
+    }
+
+    private var gapText: String {
+        let s = Int(workout.estimatedSeconds)
+        return s >= 60 ? "\(s / 60) min \(s % 60) s" : "\(s) s"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Estimated while your strap was off", systemImage: "waveform.path.ecg")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Your strap dropped out for \(gapText). FIGHT estimated your heart rate for that stretch from the rest of this session. These are estimates, not measurements, and they aren't counted in your averages, zones, calories or records.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                BigNumber(value: "≈\(estimatedAverage)", label: "est. avg bpm", size: 22)
+                BigNumber(value: "≈\(Int(workout.estimatedCalories))", label: "est. burn kcal", size: 22)
+                BigNumber(value: gapText, label: "estimated", size: 22)
+            }
+            .foregroundStyle(.secondary)
+            Chart {
+                ForEach(realSamples) { p in
+                    LineMark(x: .value("Time", p.elapsedSeconds / 60), y: .value("BPM", p.bpm),
+                             series: .value("Kind", "Measured"))
+                        .foregroundStyle(Theme.red)
+                }
+                ForEach(workout.estimatedSamples) { p in
+                    PointMark(x: .value("Time", p.elapsedSeconds / 60), y: .value("BPM", p.bpm))
+                        .symbolSize(6)
+                        .foregroundStyle(Color.gray)
+                }
+            }
+            .chartXAxisLabel("min")
+            .frame(height: 120)
+            HStack(spacing: 14) {
+                Label("Measured", systemImage: "circle.fill").foregroundStyle(Theme.red)
+                Label("Estimated", systemImage: "circle.dotted").foregroundStyle(.gray)
+            }
+            .font(.caption)
+        }
+        .card()
+        .accessibilityElement(children: .combine)
     }
 }

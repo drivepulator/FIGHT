@@ -243,7 +243,26 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         for node in [comboNode, voiceNode, fxNode] { node.stop() }
         engine.stop()
         removeHitTap()
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        releaseSession()
+    }
+
+    /// Hand the sound back to your music. Ducking is switched off first (so the music comes back
+    /// up even if iOS is slow to let go), then the session is released, retrying if a sound was
+    /// still finishing.
+    private func releaseSession(attempt: Int = 0) {
+        let session = AVAudioSession.sharedInstance()
+        if attempt == 0 {
+            try? session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        }
+        do {
+            try session.setActive(false, options: [.notifyOthersOnDeactivation])
+        } catch {
+            guard attempt < 5 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, !self.audioEnabled else { return }
+                self.releaseSession(attempt: attempt + 1)
+            }
+        }
     }
 
     // MARK: Speech rendering
@@ -745,5 +764,61 @@ enum VoiceDiskCache {
             }
         }
         return buffer
+    }
+}
+
+
+/// The end-of-session summary voice. It lowers your music only while it speaks, then gives the
+/// sound back (before, the music could stay quiet after the summary).
+final class DebriefSpeaker: NSObject, AVSpeechSynthesizerDelegate {
+    private let synth = AVSpeechSynthesizer()
+    private var ownsSession = false
+
+    override init() {
+        super.init()
+        synth.delegate = self
+        synth.usesApplicationAudioSession = true
+    }
+
+    func speak(_ text: String, volume: Float) {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
+        try? session.setActive(true)
+        ownsSession = true
+        let u = AVSpeechUtterance(string: text)
+        u.rate = AVSpeechUtteranceDefaultSpeechRate
+        u.volume = volume
+        synth.speak(u)
+    }
+
+    /// A new session is starting: stop talking, and leave the sound to the new session.
+    func stop() {
+        ownsSession = false
+        if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        release()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        release()
+    }
+
+    private func release(attempt: Int = 0) {
+        guard ownsSession, !synth.isSpeaking else { return }
+        let session = AVAudioSession.sharedInstance()
+        if attempt == 0 {
+            try? session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        }
+        do {
+            try session.setActive(false, options: [.notifyOthersOnDeactivation])
+            ownsSession = false
+        } catch {
+            guard attempt < 5 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.release(attempt: attempt + 1)
+            }
+        }
     }
 }

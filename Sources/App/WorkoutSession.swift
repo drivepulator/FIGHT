@@ -58,6 +58,9 @@ struct WorkoutDraft: Codable {
     var run: RunSummary?
     var route: [RoutePoint]?
     var activityName: String?
+    /// Estimated heart rate while the strap was off (never mixed with real readings).
+    var estimatedSamples: [HeartRatePoint]?
+    var estimatedCalories: Double?
 }
 
 enum WorkoutFinalizer {
@@ -136,6 +139,8 @@ enum WorkoutFinalizer {
         if let hits = d.impactsCount { made.impactsCount = hits }
         made.run = d.run
         made.activityName = d.activityName
+        made.estimatedSamples = d.estimatedSamples ?? []
+        made.estimatedCalories = d.estimatedCalories ?? 0
         made.jumps = d.jumps ?? []
         return made
     }
@@ -301,6 +306,13 @@ final class WorkoutSession {
     private var lastGhostAlertTime: TimeInterval = -999
     private var lastPlanAlertTime: TimeInterval = -999
     @ObservationIgnored private var hrAlertTracker = HRAlertTracker()
+    @ObservationIgnored private var hrEstimator = HREstimator()
+    /// Estimated heart rate while the strap is off (nil when real readings are coming in).
+    private(set) var estimatedBPM: Int?
+    /// Estimates kept for the session (shown apart from real data).
+    @ObservationIgnored private var estimatedSamples: [HeartRatePoint] = []
+    /// Estimated burn while the strap was off (not in the measured calories).
+    private(set) var estimatedCalories: Double = 0
     /// +1 above target, -1 under, 0 in range (for the live screen).
     private(set) var hrTargetPosition = 0
     private var lthrWarmupAnnounced = false
@@ -344,7 +356,7 @@ final class WorkoutSession {
     /// Movement per second (AirPods moves + bounces + bag hits), for finding rounds afterwards.
     @ObservationIgnored private var activityTrail: [ActivityPoint] = []
     @ObservationIgnored private var lastActivityTotal = 0
-    private let debriefVoice = AVSpeechSynthesizer()
+    private let debriefVoice = DebriefSpeaker()
     private var strapLostSince: Date?
     /// Short-lived banner, e.g. "New record: recovery −38 BPM".
     private(set) var liveRecordBanner: String?
@@ -904,6 +916,7 @@ final class WorkoutSession {
 
     func startWorkout() {
         guard !isRecording else { return }
+        debriefVoice.stop()
         flushPendingHealthSave()
         // A finished session that couldn't be saved is still in the crash-safety copy, which a new
         // session would overwrite: save it first, or don't start.
@@ -951,6 +964,10 @@ final class WorkoutSession {
         lastPlanAlertTime = -999
         hrAlertTracker = HRAlertTracker()
         hrTargetPosition = 0
+        hrEstimator = HREstimator()
+        estimatedBPM = nil
+        estimatedSamples = []
+        estimatedCalories = 0
         lthrWarmupAnnounced = false
         finalRoundAnnounced = false
         bagSessionComplete = false
@@ -1308,6 +1325,21 @@ final class WorkoutSession {
         let cal = FighterAnalytics.calculateCalorieBreakdown(bpm: bpm, durationSeconds: creditedDT, profile: p)
         activeCalories += cal.active
         bmrCalories += cal.bmr
+
+        // Context for estimates: work or rest in rounds, speed on runs.
+        let phaseResting: Bool? = roundTimerEnabled ? isRestPeriod : nil
+        let speed: Double? = (run.isActive && run.currentPace > 0) ? run.unitMeters / run.currentPace : nil
+        if bpm > 0 {
+            estimatedBPM = nil
+            hrEstimator.addReal(bpm: bpm, at: elapsedSeconds, resting: phaseResting, speed: speed)
+        } else if let est = hrEstimator.estimate(at: elapsedSeconds, resting: phaseResting, speed: speed, maxHR: p.effectiveMaxHR) {
+            // Strap off: estimate, but keep it apart from real data.
+            estimatedBPM = est
+            estimatedSamples.append(HeartRatePoint(timestamp: now, elapsedSeconds: elapsedSeconds, bpm: est, rrIntervalsMs: []))
+            estimatedCalories += FighterAnalytics.calculateCalorieBreakdown(bpm: est, durationSeconds: creditedDT, profile: p).active
+        } else {
+            estimatedBPM = nil
+        }
 
         if bpm > 0 {
             let rr = ble?.consumeLatestRRIntervals() ?? []
@@ -1707,10 +1739,8 @@ final class WorkoutSession {
     private func speakDebrief(_ w: SavedWorkout, history: [SavedWorkout], profile p: AthleteProfile) {
         // "Alerts only" coach: no spoken debrief either.
         guard p.audioCoach.masterEnabled, p.encouragement, w.duration >= 300 else { return }
-        let u = AVSpeechUtterance(string: SessionDebrief.text(for: w, history: history, profile: p))
-        u.rate = AVSpeechUtteranceDefaultSpeechRate
-        debriefVoice.usesApplicationAudioSession = false
-        debriefVoice.speak(u)
+        debriefVoice.speak(SessionDebrief.text(for: w, history: history, profile: p),
+                           volume: Float(p.audioCoach.voiceVolume))
     }
 
     // MARK: Signature features
@@ -1917,7 +1947,9 @@ final class WorkoutSession {
             activity: activityTrail.isEmpty ? nil : activityTrail,
             run: run.snapshot?.summary,
             route: run.snapshot?.route,
-            activityName: activityName
+            activityName: activityName,
+            estimatedSamples: estimatedSamples.isEmpty ? nil : estimatedSamples,
+            estimatedCalories: estimatedCalories > 0 ? estimatedCalories : nil
         )
     }
 
