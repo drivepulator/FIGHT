@@ -1,0 +1,42 @@
+name: Logger firmware
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Firmware/**'
+      - '.github/workflows/logger.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install the XIAO nRF52840 board support
+        run: |
+          pipx install adafruit-nrfutil
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json
+          arduino-cli core update-index
+          arduino-cli core install Seeeduino:nrf52
+          arduino-cli board listall | grep -i xiao || true
+
+      - name: Build
+        run: |
+          arduino-cli compile --fqbn Seeeduino:nrf52:xiaonRF52840 --output-dir build Firmware/FightLogger
+          ls -la build
+
+      - name: Make the drag-and-drop file (UF2)
+        run: |
+          curl -sSLO https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2conv.py
+          curl -sSLO https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2families.json
+          python3 uf2conv.py -c -f 0xADA52840 -o build/FIGHT-Logger.uf2 build/FightLogger.ino.hex
+          ls -la build/FIGHT-Logger.uf2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FIGHT-Logger-UF2
+          path: build/FIGHT-Logger.uf2
