@@ -1316,7 +1316,11 @@ struct LiveWorkoutView: View {
     /// One short line instead of a banner.
     @ViewBuilder
     private var liveWarning: some View {
-        if bleManager.isConnected && (bleManager.sensorContactDetected == false || bleManager.isSignalLost) {
+        if bleManager.isLogger, let s = bleManager.loggerStatus, !s.bandConnected {
+            Label("The logger can't find your band. Check it's on and close.", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+        } else if bleManager.isConnected && (bleManager.sensorContactDetected == false || bleManager.isSignalLost) {
             Label(bleManager.isSignalLost ? "No signal. Check the strap is on." : "Poor contact. Tighten or wet the strap.",
                   systemImage: "exclamationmark.triangle.fill")
                 .font(.caption.weight(.semibold))

@@ -993,6 +993,8 @@ struct SavedWorkout: Codable, Identifiable {
     var estimatedSamples: [HeartRatePoint] = []
     /// Estimated burn while the strap was off. Not included in `calories`.
     var estimatedCalories: Double = 0
+    /// Seconds of real heart rate recovered from a FIGHT Logger after the phone dropped out.
+    var recoveredFromLogger: Int = 0
     /// Seconds covered by estimates.
     var estimatedSeconds: TimeInterval { Double(estimatedSamples.count) }
 
@@ -1011,7 +1013,7 @@ struct SavedWorkout: Codable, Identifiable {
         case trainingPlanID, trainingPlanTitle, blockResults
         case comboEvents, headMovesPerMinute, breathingGuided
         case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt, jumps, run, activityName
-        case estimatedSamples, estimatedCalories
+        case estimatedSamples, estimatedCalories, recoveredFromLogger
     }
 
     init(
@@ -1158,6 +1160,7 @@ struct SavedWorkout: Codable, Identifiable {
         activityName = (try? c.decodeIfPresent(String.self, forKey: .activityName)) ?? nil
         estimatedSamples = (try? c.decodeIfPresent([HeartRatePoint].self, forKey: .estimatedSamples)) ?? []
         estimatedCalories = (try? c.decodeIfPresent(Double.self, forKey: .estimatedCalories)) ?? 0
+        recoveredFromLogger = (try? c.decodeIfPresent(Int.self, forKey: .recoveredFromLogger)) ?? 0
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

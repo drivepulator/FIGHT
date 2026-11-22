@@ -76,6 +76,16 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     @Published var isSignalLost = false
     @Published var discoveredDevices: [DiscoveredHRDevice] = []
     @Published var connectionError: String?
+    /// Connected to a FIGHT Logger (which relays the band and keeps every reading).
+    @Published var isLogger = false
+    /// The logger's latest report: is the band connected, its battery, readings stored.
+    @Published var loggerStatus: LoggerProtocol.Status?
+    /// Called with the readings a logger sent back after a gap.
+    var onLoggerReadings: (([LoggerProtocol.Reading]) -> Void)?
+    private var loggerControl: CBCharacteristic?
+    private var loggerIncoming: [LoggerProtocol.Reading] = []
+    private var loggerDownloading = false
+    private var loggerRequestedAt: Date?
 
     private var centralManager: CBCentralManager!
     private var connectedPeripheral: CBPeripheral?
@@ -235,6 +245,11 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     }
 
     private func cleanupConnection(message: String) {
+        isLogger = false
+        loggerStatus = nil
+        loggerControl = nil
+        loggerIncoming = []
+        loggerDownloading = false
         isConnected = false
         isConnecting = false
         connectStartedAt = nil
@@ -342,6 +357,11 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
                 peripheral.discoverCharacteristics([batteryLevelUUID], for: service)
             } else if service.uuid == deviceInfoServiceUUID {
                 peripheral.discoverCharacteristics([manufacturerUUID, modelUUID], for: service)
+            } else if service.uuid == CBUUID(string: LoggerProtocol.serviceUUID) {
+                isLogger = true
+                peripheral.discoverCharacteristics([CBUUID(string: LoggerProtocol.controlUUID),
+                                                    CBUUID(string: LoggerProtocol.dataUUID),
+                                                    CBUUID(string: LoggerProtocol.statusUUID)], for: service)
             }
         }
     }
@@ -358,7 +378,55 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
             sensorInfo?.manufacturer = Self.cleanString(data)
         case modelUUID:
             sensorInfo?.model = Self.cleanString(data)
+        case CBUUID(string: LoggerProtocol.statusUUID):
+            loggerStatus = LoggerProtocol.parseStatus(data)
+        case CBUUID(string: LoggerProtocol.dataUUID):
+            handleLoggerPacket(data)
         default:
+            break
+        }
+    }
+
+    // MARK: FIGHT Logger
+
+    private func loggerReady(control: CBCharacteristic) {
+        loggerControl = control
+        isLogger = true
+        // The logger has no clock of its own: give it the time on every connect.
+        writeLogger(LoggerProtocol.setClock(Date()))
+    }
+
+    private func writeLogger(_ data: Data) {
+        guard let peripheral = connectedPeripheral, let control = loggerControl else { return }
+        peripheral.writeValue(data, for: control, type: .withResponse)
+    }
+
+    /// Ask the logger for every reading after `since` (the start of a gap).
+    func requestLoggerReadings(since: Date) {
+        guard isLogger else { return }
+        // One download at a time (a stuck one is given up after 20 s).
+        if loggerDownloading, let at = loggerRequestedAt, Date().timeIntervalSince(at) < 20 { return }
+        loggerDownloading = true
+        loggerRequestedAt = Date()
+        loggerIncoming = []
+        writeLogger(LoggerProtocol.sendSince(since))
+    }
+
+    /// Pair the logger with a different band (the closest one it finds).
+    func loggerForgetBand() {
+        writeLogger(LoggerProtocol.forgetBand)
+    }
+
+    private func handleLoggerPacket(_ data: Data) {
+        switch LoggerProtocol.parsePacket(data) {
+        case .readings(let r):
+            loggerIncoming.append(contentsOf: r)
+        case .end:
+            let readings = loggerIncoming
+            loggerIncoming = []
+            loggerDownloading = false
+            if !readings.isEmpty { onLoggerReadings?(readings) }
+        case nil:
             break
         }
     }
@@ -463,6 +531,9 @@ extension BLEHeartRateManager: CBPeripheralDelegate {
         let hrMeasurement = CBUUID(string: "2A37")
         let battery = CBUUID(string: "2A19")
         let readOnce: Set<CBUUID> = [CBUUID(string: "2A38"), CBUUID(string: "2A29"), CBUUID(string: "2A24")]
+        let loggerControl = CBUUID(string: LoggerProtocol.controlUUID)
+        let loggerData = CBUUID(string: LoggerProtocol.dataUUID)
+        let loggerStatus = CBUUID(string: LoggerProtocol.statusUUID)
         for ch in chars {
             if ch.uuid == hrMeasurement {
                 peripheral.setNotifyValue(true, for: ch)
@@ -473,6 +544,13 @@ extension BLEHeartRateManager: CBPeripheralDelegate {
                 }
             } else if readOnce.contains(ch.uuid) {
                 peripheral.readValue(for: ch)
+            } else if ch.uuid == loggerData {
+                peripheral.setNotifyValue(true, for: ch)
+            } else if ch.uuid == loggerStatus {
+                peripheral.setNotifyValue(true, for: ch)
+                peripheral.readValue(for: ch)
+            } else if ch.uuid == loggerControl {
+                Task { @MainActor in self.loggerReady(control: ch) }
             }
         }
     }
@@ -538,6 +616,20 @@ struct DeviceScannerSheet: View {
                                         .font(.caption)
                                         .foregroundStyle(battery > 20 ? Color.secondary : Color.orange)
                                 }
+                            }
+                            if bleManager.isLogger {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if let s = bleManager.loggerStatus {
+                                        Label(s.bandConnected ? "Band connected to the logger" : "Logger can't find your band",
+                                              systemImage: s.bandConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                            .foregroundStyle(s.bandConnected ? Color.green : Color.orange)
+                                    }
+                                    Text("The logger keeps every reading. If your phone drops out, the missed time is filled in with real data when it reconnects.")
+                                        .foregroundStyle(.secondary)
+                                    Button("Pair the logger with a different band") { bleManager.loggerForgetBand() }
+                                        .controlSize(.small)
+                                }
+                                .font(.caption)
                             }
                             Button("Disconnect", role: .destructive) {
                                 if WorkoutSession.shared?.isRecording == true {

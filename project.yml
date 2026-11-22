@@ -79,6 +79,7 @@ targets:
       - path: Sources/App/HoldCountdown.swift
       - path: Sources/App/HRAlerts.swift
       - path: Sources/App/HREstimator.swift
+      - path: Sources/App/LoggerProtocol.swift
       - path: Sources/PlanKit
     settings:
       base:

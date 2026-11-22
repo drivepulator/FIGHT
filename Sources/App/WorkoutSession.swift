@@ -61,6 +61,8 @@ struct WorkoutDraft: Codable {
     /// Estimated heart rate while the strap was off (never mixed with real readings).
     var estimatedSamples: [HeartRatePoint]?
     var estimatedCalories: Double?
+    /// Seconds of real heart rate recovered from a FIGHT Logger after the phone dropped out.
+    var recoveredSeconds: Int?
 }
 
 enum WorkoutFinalizer {
@@ -141,6 +143,7 @@ enum WorkoutFinalizer {
         made.activityName = d.activityName
         made.estimatedSamples = d.estimatedSamples ?? []
         made.estimatedCalories = d.estimatedCalories ?? 0
+        made.recoveredFromLogger = d.recoveredSeconds ?? 0
         made.jumps = d.jumps ?? []
         return made
     }
@@ -313,6 +316,11 @@ final class WorkoutSession {
     @ObservationIgnored private var estimatedSamples: [HeartRatePoint] = []
     /// Estimated burn while the strap was off (not in the measured calories).
     private(set) var estimatedCalories: Double = 0
+    /// Seconds of real heart rate a FIGHT Logger sent back after gaps.
+    private(set) var recoveredSeconds = 0
+    /// When the current gap in heart rate started (the last real reading before it).
+    @ObservationIgnored private var gapFrom: Date?
+    @ObservationIgnored private var lastRealAt: Date?
     /// +1 above target, -1 under, 0 in range (for the live screen).
     private(set) var hrTargetPosition = 0
     private var lthrWarmupAnnounced = false
@@ -968,6 +976,9 @@ final class WorkoutSession {
         estimatedBPM = nil
         estimatedSamples = []
         estimatedCalories = 0
+        recoveredSeconds = 0
+        gapFrom = nil
+        lastRealAt = nil
         lthrWarmupAnnounced = false
         finalRoundAnnounced = false
         bagSessionComplete = false
@@ -1040,8 +1051,36 @@ final class WorkoutSession {
         startClock()
     }
 
+    /// Real readings a FIGHT Logger kept while the phone was out of range: they fill the gaps,
+    /// count like any other reading, and replace the estimates for the same stretch.
+    private func mergeLoggerReadings(_ readings: [LoggerProtocol.Reading]) {
+        guard isRecording, let start = startTime else { return }
+        let fill = LoggerProtocol.gapFillers(readings, existing: samples.map(\.timestamp), from: start, to: Date())
+        guard !fill.isEmpty else { return }
+        let p = profile
+        for r in fill {
+            let elapsed = max(0, r.time.timeIntervalSince(start) - pausedTotal)
+            samples.append(HeartRatePoint(timestamp: r.time, elapsedSeconds: elapsed, bpm: r.bpm, rrIntervalsMs: []))
+            sumBPM += r.bpm
+            maxBPMSeen = max(maxBPMSeen, r.bpm)
+            zoneSeconds[p.zone(for: r.bpm).number, default: 0] += 1
+            activeCalories += FighterAnalytics.calculateCalorieBreakdown(bpm: r.bpm, durationSeconds: 1, profile: p).active
+        }
+        samples.sort { $0.timestamp < $1.timestamp }
+        if let first = fill.first?.time, let last = fill.last?.time, !estimatedSamples.isEmpty {
+            let before = estimatedSamples.count
+            estimatedSamples.removeAll { $0.timestamp >= first.addingTimeInterval(-1) && $0.timestamp <= last.addingTimeInterval(1) }
+            estimatedCalories *= Double(estimatedSamples.count) / Double(before)
+        }
+        recoveredSeconds += fill.count
+        // Samples were inserted in the middle: rewrite the recovery copy in full.
+        draftSamplesWritten = 0
+        saveDraft()
+    }
+
     /// Head tracking, nods, call pausing and bag-hit counting for a live session.
     private func engageSensors() {
+        ble?.onLoggerReadings = { [weak self] readings in self?.mergeLoggerReadings(readings) }
         if profile.trackHeadMovement {
             headMotion.start()
             headMotion.trackingChin = roundTimerEnabled
@@ -1330,6 +1369,12 @@ final class WorkoutSession {
         let phaseResting: Bool? = roundTimerEnabled ? isRestPeriod : nil
         let speed: Double? = (run.isActive && run.currentPace > 0) ? run.unitMeters / run.currentPace : nil
         if bpm > 0 {
+            // Back after a gap: a FIGHT Logger can send the real readings we missed.
+            if let from = gapFrom, now.timeIntervalSince(from) > 3, ble?.isLogger == true {
+                ble?.requestLoggerReadings(since: from)
+            }
+            gapFrom = nil
+            lastRealAt = now
             estimatedBPM = nil
             hrEstimator.addReal(bpm: bpm, at: elapsedSeconds, resting: phaseResting, speed: speed)
         } else if let est = hrEstimator.estimate(at: elapsedSeconds, resting: phaseResting, speed: speed, maxHR: p.effectiveMaxHR) {
@@ -1340,6 +1385,7 @@ final class WorkoutSession {
         } else {
             estimatedBPM = nil
         }
+        if bpm == 0, gapFrom == nil, let last = lastRealAt { gapFrom = last }
 
         if bpm > 0 {
             let rr = ble?.consumeLatestRRIntervals() ?? []
@@ -1949,7 +1995,8 @@ final class WorkoutSession {
             route: run.snapshot?.route,
             activityName: activityName,
             estimatedSamples: estimatedSamples.isEmpty ? nil : estimatedSamples,
-            estimatedCalories: estimatedCalories > 0 ? estimatedCalories : nil
+            estimatedCalories: estimatedCalories > 0 ? estimatedCalories : nil,
+            recoveredSeconds: recoveredSeconds > 0 ? recoveredSeconds : nil
         )
     }
 

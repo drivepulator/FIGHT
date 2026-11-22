@@ -98,6 +98,13 @@ struct WorkoutDetailView: View {
                 ScorecardHeader(workout: workout) {
                     storyFocus = workout.run?.hasRoute == true ? .route : (workout.hasHeartRate ? .mainEvent : .profile)
                 }
+                if workout.recoveredFromLogger > 0 {
+                    Label("\(workout.recoveredFromLogger / 60) min \(workout.recoveredFromLogger % 60) s of real heart rate recovered from your FIGHT Logger",
+                          systemImage: "arrow.triangle.2.circlepath.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 if !workout.estimatedSamples.isEmpty {
                     EstimatedHeartRateCard(workout: workout, realSamples: chartSamples)
                 }
