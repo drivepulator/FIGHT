@@ -35,7 +35,11 @@ struct FightApp: App {
                 if !session.isRecording { WorkoutSession.endLeftoverActivities() }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { workoutStore.flushPendingSaves() }
+                if phase != .active {
+                    workoutStore.flushPendingSaves()
+                    // Leaving the app: don't risk losing the Health copy.
+                    if phase == .background { session.flushPendingHealthSave() }
+                }
             }
             .onOpenURL { url in
                 navigation.handleOpenURL(url)

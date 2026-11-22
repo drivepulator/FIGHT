@@ -901,6 +901,7 @@ final class WorkoutSession {
 
     func startWorkout() {
         guard !isRecording else { return }
+        flushPendingHealthSave()
         // A finished session that couldn't be saved is still in the crash-safety copy, which a new
         // session would overwrite: save it first, or don't start.
         if let unsaved = unsavedWorkout {
@@ -1156,10 +1157,12 @@ final class WorkoutSession {
         }
 
         if let health, health.autoSaveEnabled {
+            // Sent to Apple Health once you close the summary, so "Discard" can still
+            // take it back without leaving a copy in Health.
             let sensor = ble?.sensorInfo
             let hkSamples = saved.samples
             let route = runResult?.route ?? []
-            Task { await health.save(workout: saved, samples: hkSamples, sensor: sensor, route: route) }
+            pendingHealthSave = { Task { await health.save(workout: saved, samples: hkSamples, sensor: sensor, route: route) } }
         }
 
         speakDebrief(saved, history: store.workouts, profile: current)
@@ -1168,6 +1171,27 @@ final class WorkoutSession {
         activePlan = nil
         resetPlanState()
         showingSummary = true
+    }
+
+    /// Apple Health copy of the session just finished, sent when its summary closes.
+    @ObservationIgnored private var pendingHealthSave: (() -> Void)?
+
+    /// Send the finished session to Apple Health (summary closed, app backgrounded, or a new session).
+    func flushPendingHealthSave() {
+        let save = pendingHealthSave
+        pendingHealthSave = nil
+        save?()
+    }
+
+    /// Throw away the session that was just saved (from its summary). It goes to Recently Deleted
+    /// for 30 days, and never reaches Apple Health. Returns it so it can be restored.
+    func discardFinished() -> SavedWorkout? {
+        guard let w = finishedWorkout, let store else { return nil }
+        pendingHealthSave = nil
+        store.delete(w)
+        finishedWorkout = nil
+        showingSummary = false
+        return w
     }
 
     /// Discards the session into Recently Deleted (so it can still be restored) and returns it.

@@ -206,13 +206,27 @@ struct LiveWorkoutView: View {
             .sensoryFeedback(.impact(weight: .heavy), trigger: session.currentRound)
             .sensoryFeedback(.warning, trigger: session.isRestPeriod)
             .sensoryFeedback(.start, trigger: session.isRecording)
-            .sheet(isPresented: sessionBinding.showingSummary) {
+            .sheet(isPresented: sessionBinding.showingSummary, onDismiss: {
+                session.flushPendingHealthSave()
+            }) {
                 if let workout = session.finishedWorkout {
                     NavigationStack {
                         WorkoutDetailView(workout: workout)
                             .toolbar {
                                 ToolbarItem(placement: .topBarTrailing) {
                                     Button("Done") { session.showingSummary = false }
+                                        .fontWeight(.semibold)
+                                }
+                                ToolbarItem(placement: .bottomBar) {
+                                    Button(role: .destructive) {
+                                        if let w = session.discardFinished() {
+                                            undo.show("Workout discarded") { workoutStore.restore(w) }
+                                        }
+                                    } label: {
+                                        Label("Discard workout", systemImage: "trash")
+                                            .labelStyle(.titleAndIcon)
+                                    }
+                                    .tint(.red)
                                 }
                             }
                     }
@@ -1457,7 +1471,7 @@ struct LiveWorkoutView: View {
                     .sensoryFeedback(.impact(weight: .heavy), trigger: session.isRestPeriod)
                 }
             }
-            HoldToEndButton(height: buttonHeight) { showingFinishConfirm = true }
+            HoldToEndButton(height: buttonHeight) { session.finishAndSave() }
         }
         .padding(.horizontal)
         .padding(.vertical, 16)
