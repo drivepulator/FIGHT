@@ -22,7 +22,7 @@ struct StartWorkoutIntent: AppIntent {
         guard let session = await liveSession() else { return .result(dialog: "Open FIGHT once, then try again.") }
         AppNavigation.shared?.selectedTab = .corner
         guard !session.isRecording else { return .result(dialog: "You're already recording.") }
-        session.startWorkout()
+        session.begin()
         return .result(dialog: "Workout started. Fight well.")
     }
 }
@@ -38,7 +38,7 @@ struct StartBagCoachIntent: AppIntent {
         AppNavigation.shared?.selectedTab = .corner
         guard !session.isRecording else { return .result(dialog: "You're already recording.") }
         session.bagEnabled = true
-        session.startWorkout()
+        session.begin()
         return .result(dialog: "Bag coach starting. Hands up.")
     }
 }

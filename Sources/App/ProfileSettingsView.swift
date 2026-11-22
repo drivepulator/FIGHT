@@ -15,6 +15,7 @@ struct ProfileSettingsView: View {
     @State private var showingBreathing = false
     @State private var showingSoreness = false
     @State private var showingWarmUp = false
+    @AppStorage("fight.getReadySeconds") private var getReadySeconds = 10
 
     enum ActiveWheelPicker: Hashable {
         case age, weight, height, targetWeight, restingHR, maxHR, lthr
@@ -123,8 +124,17 @@ struct ProfileSettingsView: View {
                     Toggle(isOn: binding(for: \.encouragement)) {
                         Label("Corner coach", systemImage: "megaphone.fill")
                     }
+                    Picker(selection: $getReadySeconds) {
+                        Text("Off").tag(0)
+                        Text("5 s").tag(5)
+                        Text("10 s").tag(10)
+                        Text("15 s").tag(15)
+                        Text("20 s").tag(20)
+                    } label: {
+                        Label("Get ready before the bell", systemImage: "timer")
+                    }
                 } footer: {
-                    Text("Corner coach pushes you when your pace drops and tells you to breathe when you're redlining.")
+                    Text("Corner coach pushes you when your pace drops and tells you to breathe when you're redlining. Get ready gives you time to glove up before rounds and bag work; skip it with Start now or a nod.")
                 }
 
                 Group {

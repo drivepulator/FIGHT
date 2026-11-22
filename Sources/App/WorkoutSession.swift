@@ -248,6 +248,15 @@ final class WorkoutSession {
     // MARK: Private bookkeeping
     private var draftID = UUID()
     @ObservationIgnored private var timer: Timer?
+    /// Seconds left of "Gloves on" before the bell; nil when not getting ready.
+    private(set) var getReadyRemaining: Int?
+    @ObservationIgnored private var getReadyTimer: Timer?
+    /// The get-ready countdown length chosen in You (0 = off).
+    static var getReadySeconds: Int {
+        UserDefaults.standard.object(forKey: "fight.getReadySeconds") as? Int ?? 10
+    }
+    /// Whether a nod skips the countdown (AirPods with head tracking on).
+    var nodSkipsGetReady: Bool { profile.trackHeadMovement && profile.nodToStart }
     private var lastTick: Date?
     private var lastDraftSave = Date.distantPast
     private var suppressDefaults = false
@@ -794,6 +803,63 @@ final class WorkoutSession {
     }
 
     // MARK: Start / stop
+
+    /// Start from a button: rounds and bag work get a short "gloves on" countdown first,
+    /// so the first call doesn't come while you're still strapping up.
+    func begin() {
+        guard !isRecording, getReadyRemaining == nil else { return }
+        let lead = Self.getReadySeconds
+        guard lead > 0, bagEnabled || roundTimerEnabled, queuedPlan == nil, !tracksGPS else {
+            startWorkout()
+            return
+        }
+        getReadyRemaining = lead
+        UIApplication.shared.isIdleTimerDisabled = true
+        audio.prepareForWorkout(settings: profile.audioCoach)
+        audio.announceCoachingCue("Gloves on. Square up.", enabled: true)
+        if nodSkipsGetReady {
+            headMotion.start()
+            headMotion.onNod = { [weak self] in self?.skipGetReady() }
+        }
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.getReadyTick() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        getReadyTimer = t
+    }
+
+    private func getReadyTick() {
+        guard let r = getReadyRemaining else { return }
+        let next = r - 1
+        if next <= 0 {
+            skipGetReady()
+            return
+        }
+        getReadyRemaining = next
+        if next <= 3 { audio.announceCoachingCue("\(next)", enabled: true) }
+    }
+
+    /// Skip the rest of the countdown (button or nod) and ring the bell.
+    func skipGetReady() {
+        guard getReadyRemaining != nil else { return }
+        getReadyTimer?.invalidate()
+        getReadyTimer = nil
+        getReadyRemaining = nil
+        headMotion.onNod = nil
+        startWorkout()
+    }
+
+    /// Back out before the bell: nothing is recorded.
+    func cancelGetReady() {
+        guard getReadyRemaining != nil else { return }
+        getReadyTimer?.invalidate()
+        getReadyTimer = nil
+        getReadyRemaining = nil
+        headMotion.onNod = nil
+        headMotion.stop()
+        audio.shutdownAudio()
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
 
     func startWorkout() {
         guard !isRecording else { return }
@@ -1444,6 +1510,12 @@ final class WorkoutSession {
     func skipRest() {
         guard isRecording, roundTimerEnabled, isRestPeriod else { return }
         phaseElapsed = currentPhaseTarget
+    }
+
+    /// Water, gum shield, retape: 30 more seconds on this rest.
+    func extendRest(by seconds: TimeInterval = 30) {
+        guard isRecording, roundTimerEnabled, isRestPeriod, !isInPlanTransition else { return }
+        phaseElapsed = max(0, phaseElapsed - seconds)
     }
 
     /// Strap off for 2 minutes during a session: offer to finish.

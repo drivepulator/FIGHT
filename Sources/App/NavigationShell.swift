@@ -27,6 +27,13 @@ struct RootView: View {
                 FightTabBar()
             }
         }
+        .overlay {
+            if session.getReadyRemaining != nil {
+                GetReadyView()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: session.getReadyRemaining == nil)
         .onChange(of: session.isRecording) { _, recording in
             if recording { navigation.selectedTab = .corner }
         }
@@ -148,5 +155,63 @@ struct AvatarButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("You and settings")
+    }
+}
+
+/// "Gloves on. Square up." A short countdown before the first bell.
+struct GetReadyView: View {
+    @Environment(WorkoutSession.self) var session
+
+    var body: some View {
+        let left = session.getReadyRemaining ?? 0
+        GeometryReader { g in
+            VStack(spacing: 0) {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Text("Gloves on. Square up.")
+                        .font(.title2.weight(.bold))
+                    Text("\(left)")
+                        .font(Theme.number(min(200, g.size.height * 0.28)))
+                        .contentTransition(.numericText(countsDown: true))
+                        .animation(.default, value: left)
+                    Text(session.setupSummary)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    if session.nodSkipsGetReady {
+                        Label("Nod to start now", systemImage: "airpodspro")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal)
+
+                // Bottom quarter, like the live screen: start now, or back out.
+                VStack(spacing: 10) {
+                    Button {
+                        session.skipGetReady()
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "play.fill").font(.system(size: 30, weight: .bold))
+                            Text("Start now").font(.title3.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: max(80, g.size.height * 0.27 - 90))
+                    }
+                    .buttonStyle(FightPrimaryButtonStyle())
+                    Button("Cancel") { session.cancelGetReady() }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            }
+        }
+        .background(Theme.canvas.ignoresSafeArea())
+        .sensoryFeedback(.impact(weight: .light), trigger: left)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Starting in \(left) seconds")
     }
 }

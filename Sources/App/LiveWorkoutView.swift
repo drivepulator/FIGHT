@@ -1374,6 +1374,24 @@ struct LiveWorkoutView: View {
     private func liveControlBar(height: CGFloat) -> some View {
         let buttonHeight = max(56, height - 32)
         return HStack(spacing: 12) {
+            if session.roundTimerEnabled && !session.bagSessionComplete && session.isRestPeriod && !session.isInPlanTransition {
+                Button {
+                    session.extendRest()
+                } label: {
+                    VStack(spacing: 10) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 32, weight: .bold))
+                        Text("30 s")
+                            .font(.title3.weight(.bold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: buttonHeight)
+                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add 30 seconds of rest")
+            }
             if session.roundTimerEnabled && !session.bagSessionComplete {
                 Button {
                     if session.isRestPeriod {
@@ -1431,7 +1449,7 @@ struct LiveWorkoutView: View {
         VStack(spacing: 10) {
             if !session.isRecording {
                 Button {
-                    session.startWorkout()
+                    session.begin()
                 } label: {
                     Label(session.selectedCategory == .lthrTest && session.queuedPlan == nil ? "Start 30-Min LTHR Test" : "Start", systemImage: "play.fill")
                         .font(.title3.weight(.bold))

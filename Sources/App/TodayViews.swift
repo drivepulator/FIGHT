@@ -100,14 +100,14 @@ struct TodayCard: View {
         }
         session.apply(p)
         guard session.bagEnabled else {
-            session.startWorkout()
+            session.begin()
             return
         }
         preparingVoice = true
         Task {
             await session.audio.prepareVocabulary(prefs: session.bagPrefs)
             preparingVoice = false
-            session.startWorkout()
+            session.begin()
         }
     }
 

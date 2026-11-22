@@ -166,7 +166,7 @@ struct ReadyCard: View {
             }
             Button {
                 guard session.bagEnabled else {
-                    session.startWorkout()
+                    session.begin()
                     onStarted()
                     return
                 }
@@ -174,7 +174,7 @@ struct ReadyCard: View {
                 Task {
                     await session.audio.prepareVocabulary(prefs: session.bagPrefs)
                     preparingVoice = false
-                    session.startWorkout()
+                    session.begin()
                     onStarted()
                 }
             } label: {
@@ -428,7 +428,7 @@ private struct ReadyView: View {
                 Button {
                     session.choose(option, length: length)
                     guard option.bagCoach else {
-                        session.startWorkout()
+                        session.begin()
                         finish()
                         return
                     }
@@ -438,7 +438,7 @@ private struct ReadyView: View {
                     Task {
                         await session.audio.prepareVocabulary(prefs: session.bagPrefs)
                         preparingVoice = false
-                        session.startWorkout()
+                        session.begin()
                         finish()
                     }
                 } label: {
