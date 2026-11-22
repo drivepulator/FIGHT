@@ -22,6 +22,9 @@ struct LiveWorkoutView: View {
     @State private var chooser: MainChoice?
     @State private var chooserFollowUp: ChooserFollowUp?
     @State private var showingMix = false
+    /// A door picked on the Start sheet; its chooser opens once that sheet has closed.
+    @State private var pendingDoor: MainChoice?
+    @ScaledMetric(relativeTo: .largeTitle) private var clockSize: CGFloat = 84
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -61,6 +64,7 @@ struct LiveWorkoutView: View {
                     }
 
                     if session.isRecording {
+                        liveClock
                         if session.run.isActive {
                             RunLiveCard(run: session.run)
                         }
@@ -75,7 +79,12 @@ struct LiveWorkoutView: View {
                             }
                             .buttonStyle(.bordered)
                         } else {
-                            heroBPMCard(currentZone: currentZone, profile: profile)
+                            LiveZoneBand(bpm: bleManager.currentBPM,
+                                         zoneName: currentZone.name,
+                                         color: currentZone.color,
+                                         average: session.liveAverageBPM,
+                                         maximum: session.liveMaxBPM,
+                                         calories: Int(session.activeCalories + session.bmrCalories))
                         }
 
                         if let record = session.liveRecordBanner {
@@ -97,15 +106,9 @@ struct LiveWorkoutView: View {
                                          isComplete: session.bagSessionComplete)
                         }
 
-                        if session.roundTimerEnabled {
-                            roundBellCard
-                        }
-
                         if session.selectedCategory == .lthrTest {
                             lthrFieldTestCard
                         }
-
-                        controlButtons
 
                         AdvancedSection("Live details", subtitle: "Chart, ghost pace, notes", key: "live.recording") {
                             if let autoBanner = session.latestAutoHRRBanner {
@@ -132,26 +135,54 @@ struct LiveWorkoutView: View {
                     } else {
                         AutoStartBanner()
 
+                        if session.queuedPlan != nil {
+                            ReadyCard()
+                        }
+
                         TodayCard()
 
                         if bleManager.isConnected {
-                            heroBPMCard(currentZone: currentZone, profile: profile)
+                            idleHeartRate(currentZone: currentZone)
                         }
 
-                        StartWorkoutSection { door in chooser = door }
+                        WeekStrip()
+
+                        FightCountdownCard()
+
+                        LastSessionCard()
                     }
                 }
                 .padding()
             }
-            .navigationTitle("Today")
+            .background(Theme.canvas.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if session.isRecording {
+                    liveControlBar
+                }
+            }
+            .navigationTitle(session.isRecording ? "" : "Corner")
+            .navigationBarTitleDisplayMode(session.isRecording ? .inline : .large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingDeviceSheet = true
                     } label: {
-                        Label("Sensors", systemImage: "antenna.radiowaves.left.and.right")
+                        Label("Sensors", systemImage: bleManager.isConnected ? "heart.circle.fill" : "antenna.radiowaves.left.and.right")
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !session.isRecording {
+                        AvatarButton()
+                    }
+                }
+            }
+            .sheet(isPresented: $navigation.showingStart, onDismiss: {
+                if let door = pendingDoor {
+                    pendingDoor = nil
+                    chooser = door
+                }
+            }) {
+                StartSheet { door in pendingDoor = door }
             }
             .sheet(isPresented: $showingDeviceSheet) {
                 DeviceScannerSheet()
@@ -1148,6 +1179,87 @@ struct LiveWorkoutView: View {
             }
         }
         .presentationDetents([.large])
+    }
+
+    /// The round clock: the biggest thing on the screen while training.
+    private var liveClock: some View {
+        VStack(spacing: 6) {
+            if session.roundTimerEnabled {
+                RoundDots(current: session.currentRound, total: session.roundsLimit)
+                Text(session.isRestPeriod ? "Rest" : "Round \(session.currentRound)\(session.roundsLimit.map { " of \($0)" } ?? "")")
+                    .font(.headline)
+                    .foregroundStyle(session.isRestPeriod ? Color.cyan : Color.secondary)
+                Text(formatDuration(session.phaseRemaining))
+                    .font(Theme.number(clockSize))
+                    .foregroundStyle(session.isRestPeriod ? Color.cyan : Color.primary)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                Text("\(formatDuration(session.elapsedSeconds)) total")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else {
+                Text("Time").font(.headline).foregroundStyle(.secondary)
+                Text(formatDuration(session.elapsedSeconds))
+                    .font(Theme.number(clockSize))
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Glove-sized controls at the bottom: end the round / skip rest, and hold to end.
+    private var liveControlBar: some View {
+        HStack(spacing: 12) {
+            if session.roundTimerEnabled && !session.bagSessionComplete {
+                Button {
+                    if session.isRestPeriod {
+                        session.skipRest()
+                    } else {
+                        session.endWorkPhase(manual: true)
+                    }
+                } label: {
+                    Label(session.isRestPeriod ? "Skip rest" : "End round",
+                          systemImage: session.isRestPeriod ? "forward.fill" : "bell.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            HoldToEndButton { showingFinishConfirm = true }
+        }
+        .padding(.horizontal)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .background(.bar)
+    }
+
+    /// Heart rate before you start: one quiet line.
+    private func idleHeartRate(currentZone: HeartRateZoneInfo) -> some View {
+        let bpm = bleManager.currentBPM
+        return HStack(spacing: 10) {
+            Image(systemName: "heart.fill")
+                .foregroundStyle(bpm > 0 ? currentZone.color : .secondary)
+                .symbolEffect(.pulse, isActive: bpm > 0)
+            Text(bpm > 0 ? "\(bpm)" : "--")
+                .font(Theme.number(24))
+            Text(bpm > 0 ? "bpm · \(currentZone.name)" : "Waiting for heart rate")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text("Strap on")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.green)
+        }
+        .card()
+        .accessibilityElement(children: .combine)
     }
 
     private var controlButtons: some View {

@@ -79,7 +79,11 @@ struct HistoryListView: View {
                     }
                 }
             }
-            .navigationTitle(workoutStore.profiles.count > 1 && !showAllFighters ? workoutStore.activeProfile.name : "History")
+            .safeAreaInset(edge: .top, spacing: 0) { RecordSwitcher() }
+            .scrollContentBackground(.hidden)
+            .background(Theme.canvas.ignoresSafeArea())
+            .navigationTitle(workoutStore.profiles.count > 1 && !showAllFighters ? workoutStore.activeProfile.name : "Record")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {

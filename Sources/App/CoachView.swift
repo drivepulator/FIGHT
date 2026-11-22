@@ -31,24 +31,10 @@ struct CoachView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .navigationTitle("Progress")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingReadinessCheck = true
-                    } label: {
-                        Label("Readiness Check", systemImage: "heart.text.square")
-                    }
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Button { showingBreathing = true } label: { Label("Breathing Trainer", systemImage: "wind") }
-                        Button { showingSoreness = true } label: { Label("Log Soreness", systemImage: "bandage") }
-                    } label: {
-                        Label("Tools", systemImage: "ellipsis.circle")
-                    }
-                }
-            }
+            .safeAreaInset(edge: .top, spacing: 0) { RecordSwitcher() }
+            .background(Theme.canvas.ignoresSafeArea())
+            .navigationTitle("Record")
+            .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showingBreathing) { BreathingTrainerView() }
             .sheet(isPresented: $showingFightSetup) { FightSetupSheet() }
             .sheet(isPresented: $showingSoreness, onDismiss: refresh) { SorenessLogSheet() }
@@ -62,9 +48,7 @@ struct CoachView: View {
             }
             .onAppear {
                 refresh()
-                consumeReadinessRequest()
             }
-            .onChange(of: navigation.requestReadinessCheck) { _, _ in consumeReadinessRequest() }
             .onChange(of: navigation.storyToOpen) { _, kind in
                 guard let kind else { return }
                 storyFocus = kind
@@ -93,8 +77,6 @@ struct CoachView: View {
     private func content(_ report: CoachReport) -> some View {
         ScrollView {
             VStack(spacing: 16) {
-                plansEntryCard
-
                 if let plan = CampPlanner.buildPlan(profile: workoutStore.activeProfile, workouts: workoutStore.workouts),
                    let week = plan.currentWeek {
                     NavigationLink {
@@ -141,7 +123,7 @@ struct CoachView: View {
                     recommendationsSection([tip], title: "Coach's Tip")
                 }
 
-                AdvancedSection("Performance details", subtitle: "Readiness, ratings, gas tank, defence, combo cost, benchmark", key: "coach.details") {
+                Group {
                     readinessCard(report)
                     if report.hasEnoughData {
                         fightFitnessSection(report)

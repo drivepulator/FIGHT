@@ -57,7 +57,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         guard response.notification.request.identifier == WeeklyNudge.identifier else { return }
         await MainActor.run {
-            AppNavigation.shared?.selectedTab = .coach
+            AppNavigation.shared?.recordSegment = .trends
+            AppNavigation.shared?.selectedTab = .record
             AppNavigation.shared?.storyToOpen = .progress
         }
     }

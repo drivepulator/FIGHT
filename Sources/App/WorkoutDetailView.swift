@@ -94,7 +94,18 @@ struct WorkoutDetailView: View {
                 if !newRecords.isEmpty {
                     NewRecordsBanner(records: newRecords) { storyFocus = .record }
                 }
-                headerSummaryCard
+                Group {
+                ScorecardHeader(workout: workout) {
+                    storyFocus = workout.run?.hasRoute == true ? .route : (workout.hasHeartRate ? .mainEvent : .profile)
+                }
+                if !workout.notes.isEmpty {
+                    Text("\"\(workout.notes)\"")
+                        .font(.subheadline)
+                        .italic()
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                }
                 if let run = workout.run {
                     RunSummarySection(workout: workout, run: run).card()
                 }

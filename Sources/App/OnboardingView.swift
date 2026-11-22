@@ -22,6 +22,10 @@ struct OnboardingView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
+                if page > 0 && page < pages - 1 {
+                    Button("Skip") { page = pages - 1 }
+                        .accessibilityHint("Jumps to the last step. You can change everything later in You.")
+                }
                 if workoutStore.activeProfile.setupDone {
                     Button("Close") { dismiss() }
                         .accessibilityHint("Closes setup without changing anything")
@@ -329,7 +333,7 @@ struct FirstRunModifier: ViewModifier {
             }
             .alert("Good morning", isPresented: $offerMorningCheck) {
                 Button("Check Readiness") {
-                    navigation.selectedTab = .coach
+                    navigation.selectedTab = .corner
                     navigation.requestReadinessCheck = true
                 }
                 Button("Not Today", role: .cancel) {}

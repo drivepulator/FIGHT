@@ -12,25 +12,10 @@ struct FightApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TabView(selection: $navigation.selectedTab) {
-                LiveWorkoutView()
-                    .tabItem { Label("Today", systemImage: "heart.fill") }
-                    .tag(AppNavigation.Tab.live)
-
-                CoachView()
-                    .tabItem { Label("Progress", systemImage: "chart.line.uptrend.xyaxis") }
-                    .tag(AppNavigation.Tab.coach)
-
-                HistoryListView()
-                    .tabItem { Label("History", systemImage: "list.bullet.clipboard") }
-                    .tag(AppNavigation.Tab.history)
-
-                ProfileSettingsView()
-                    .tabItem { Label("You", systemImage: "person.crop.circle") }
-                    .tag(AppNavigation.Tab.profile)
-            }
+            RootView()
+                .tint(Theme.red)
             .modifier(FirstRunModifier())
-            .undoHost(bottomInset: 56)
+            .undoHost(bottomInset: 84)
             .environmentObject(undo)
             .environmentObject(bleManager)
             .environmentObject(workoutStore)

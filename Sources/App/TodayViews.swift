@@ -7,6 +7,7 @@ struct TodayCard: View {
     @EnvironmentObject var navigation: AppNavigation
 
     @State private var showingCheck = false
+    @State private var preparingVoice = false
 
     /// Shared report, computed once in the background by the store.
     private var report: CoachReport? {
@@ -44,25 +45,14 @@ struct TodayCard: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            if let today = todaysSession {
-                NavigationLink {
-                    WorkoutDetailView(workout: today)
-                } label: {
-                    HStack {
-                        Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                        Text("Today: \(today.displayTitle) · \(Int(today.duration / 60)) min")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Text("Review").font(.subheadline).foregroundStyle(.green)
-                        Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
         }
         .card()
         .sheet(isPresented: $showingCheck, onDismiss: refresh) { ReadinessCheckView() }
-        .onAppear(perform: refresh)
+        .onAppear {
+            refresh()
+            consumeCheckRequest()
+        }
+        .onChange(of: navigation.requestReadinessCheck) { _, _ in consumeCheckRequest() }
         .onChange(of: workoutStore.workouts.count) { _, _ in
             refresh()
             WeeklyNudge.reschedule(store: workoutStore)
@@ -72,32 +62,65 @@ struct TodayCard: View {
 
     private func verdict(_ p: WorkoutPrescription) -> some View {
         let v = Self.verdict(p, profile: workoutStore.activeProfile)
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 8) {
             Label(v.text, systemImage: v.icon)
-                .font(.headline.weight(.heavy))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(v.color)
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(p.title).font(.subheadline.weight(.semibold))
-                    Text("\(p.structure) · ~\(p.durationMinutes) min").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !p.isRestDay {
-                    Button("Use") {
-                        if p.plyo != nil { navigation.load(p) } else { session.apply(p) }
+            Text(p.title)
+                .font(.title2.weight(.bold))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("\(p.structure) · about \(p.durationMinutes) min")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            if !p.isRestDay {
+                Button {
+                    start(p)
+                } label: {
+                    if preparingVoice {
+                        HStack(spacing: 10) {
+                            ProgressView().tint(.white)
+                            Text("Preparing the coach's voice…")
+                        }
+                    } else {
+                        Label("Start this", systemImage: "play.fill")
                     }
-                        .buttonStyle(.borderedProminent)
-                        .tint(v.color)
-                        .disabled(session.activePlan?.title == p.title)
                 }
+                .buttonStyle(FightPrimaryButtonStyle())
+                .disabled(preparingVoice)
+                .padding(.top, 4)
             }
         }
     }
 
+    /// One tap from the coach's call to the bell.
+    private func start(_ p: WorkoutPrescription) {
+        if p.plyo != nil {
+            navigation.load(p)
+            return
+        }
+        session.apply(p)
+        guard session.bagEnabled else {
+            session.startWorkout()
+            return
+        }
+        preparingVoice = true
+        Task {
+            await session.audio.prepareVocabulary(prefs: session.bagPrefs)
+            preparingVoice = false
+            session.startWorkout()
+        }
+    }
+
+    private func consumeCheckRequest() {
+        guard navigation.requestReadinessCheck else { return }
+        navigation.requestReadinessCheck = false
+        showingCheck = true
+    }
+
     static func verdict(_ p: WorkoutPrescription, profile: AthleteProfile) -> (text: String, color: Color, icon: String) {
-        if p.isRestDay { return ("TODAY: REST & RECOVER", .cyan, "bed.double.fill") }
-        if p.targetHighBPM > profile.activeZones.z3Max { return ("TODAY: TRAIN HARD", .red, "flame.fill") }
-        return ("TODAY: GO EASY", .green, "leaf.fill")
+        if p.isRestDay { return ("Today: rest and recover", .cyan, "bed.double.fill") }
+        if p.targetHighBPM > profile.activeZones.z3Max { return ("Today: train hard", Theme.red, "flame.fill") }
+        return ("Today: go easy", .green, "leaf.fill")
     }
 
     private var checkedToday: Bool {
@@ -113,11 +136,9 @@ struct TodayCard: View {
         let toCut = lastWeight - p.targetFightWeightKg
         switch p.goal {
         case .fight:
-            guard let fight = p.fightDate, fight > Date() else { return "Set your fight date in Progress → Fight camp" }
-            let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()),
-                                                       to: Calendar.current.startOfDay(for: fight)).day ?? 0
-            let weight = toCut > 0.2 ? " · \(WeightUnits.text(toCut, p.useImperial)) to cut" : ""
-            return "Fight in \(days) day\(days == 1 ? "" : "s")" + weight
+            // The fight countdown card shows the days; only the cut goes here.
+            guard p.fightDate != nil, toCut > 0.2 else { return nil }
+            return "\(WeightUnits.text(toCut, p.useImperial)) to cut"
         case .weight:
             return toCut > 0.2 ? "\(WeightUnits.text(toCut, p.useImperial)) to your target weight" : "On target weight. Hold it."
         case .fitter:

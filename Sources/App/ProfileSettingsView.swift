@@ -11,6 +11,10 @@ struct ProfileSettingsView: View {
     @State private var showingNewProfileAlert = false
     @State private var newFighterName = ""
     @AppStorage("fight.advanced.profile") private var showAdvanced = false
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingBreathing = false
+    @State private var showingSoreness = false
+    @State private var showingWarmUp = false
 
     enum ActiveWheelPicker: Hashable {
         case age, weight, height, targetWeight, restingHR, maxHR, lthr
@@ -53,7 +57,10 @@ struct ProfileSettingsView: View {
                         }
 
                         Button {
-                            navigation.requestSetup = true
+                            navigation.showingYou = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                navigation.requestSetup = true
+                            }
                         } label: {
                             Label("Run Setup Again", systemImage: "wand.and.stars")
                         }
@@ -61,7 +68,9 @@ struct ProfileSettingsView: View {
                         if profile.name != SampleData.profileName {
                             Button {
                                 workoutStore.loadSampleFighter()
-                                navigation.selectedTab = .coach
+                                navigation.showingYou = false
+                                navigation.recordSegment = .trends
+                                navigation.selectedTab = .record
                             } label: {
                                 Label("Try FIGHT With Sample Data", systemImage: "sparkles")
                             }
@@ -116,6 +125,29 @@ struct ProfileSettingsView: View {
                     }
                 } footer: {
                     Text("Corner coach pushes you when your pace drops and tells you to breathe when you're redlining.")
+                }
+
+                Group {
+                Section("Tools") {
+                    Button { showingBreathing = true } label: {
+                        Label("Breathing trainer", systemImage: "wind")
+                    }
+                    Button { showingSoreness = true } label: {
+                        Label("Log soreness", systemImage: "bandage")
+                    }
+                    Button { showingWarmUp = true } label: {
+                        Label("Fight-night warm-up", systemImage: "flame.fill")
+                    }
+                    NavigationLink {
+                        CampView()
+                    } label: {
+                        Label("Fight camp and weigh-ins", systemImage: "calendar.badge.clock")
+                    }
+                    NavigationLink {
+                        PlanLibraryView()
+                    } label: {
+                        Label("Training plans", systemImage: "list.bullet.rectangle")
+                    }
                 }
 
                 Section("Your Body") {
@@ -181,6 +213,8 @@ struct ProfileSettingsView: View {
                             .frame(height: 130)
                         }
                     }
+                }
+
                 }
 
                 Section("Weight Goal") {
@@ -380,7 +414,18 @@ struct ProfileSettingsView: View {
                 }
                 }
             }
-            .navigationTitle("Fighter")
+            .navigationTitle("You")
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden)
+            .background(Theme.canvas)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showingBreathing) { BreathingTrainerView() }
+            .sheet(isPresented: $showingSoreness) { SorenessLogSheet() }
+            .sheet(isPresented: $showingWarmUp) { FightNightWarmUpSheet() }
             .confirmationDialog(deleteTitle(profile), isPresented: $confirmingDelete, titleVisibility: .visible) {
                 Button(profile.name == SampleData.profileName ? "Remove Sample Data" : "Delete \(profile.name)", role: .destructive) {
                     let removed = profile

@@ -20,7 +20,7 @@ struct StartWorkoutIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let session = await liveSession() else { return .result(dialog: "Open FIGHT once, then try again.") }
-        AppNavigation.shared?.selectedTab = .live
+        AppNavigation.shared?.selectedTab = .corner
         guard !session.isRecording else { return .result(dialog: "You're already recording.") }
         session.startWorkout()
         return .result(dialog: "Workout started. Fight well.")
@@ -35,7 +35,7 @@ struct StartBagCoachIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let session = await liveSession() else { return .result(dialog: "Open FIGHT once, then try again.") }
-        AppNavigation.shared?.selectedTab = .live
+        AppNavigation.shared?.selectedTab = .corner
         guard !session.isRecording else { return .result(dialog: "You're already recording.") }
         session.bagEnabled = true
         session.startWorkout()
@@ -83,7 +83,7 @@ struct ReadinessCheckIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         _ = await liveSession()
-        AppNavigation.shared?.selectedTab = .coach
+        AppNavigation.shared?.selectedTab = .corner
         AppNavigation.shared?.requestReadinessCheck = true
         return .result()
     }

@@ -4,7 +4,10 @@ import SwiftUI
 @MainActor
 final class AppNavigation: ObservableObject {
     enum Tab: Hashable {
-        case live, coach, history, profile
+        case corner, record
+    }
+    enum RecordSegment: Hashable {
+        case sessions, trends
     }
 
     /// The app's navigation, for Siri and Shortcuts.
@@ -12,7 +15,13 @@ final class AppNavigation: ObservableObject {
     /// A plyo session the coach picked; the Today tab opens the plyo sheet with it.
     @Published var plyoToPick: PlyoVariant?
 
-    @Published var selectedTab: Tab = .live
+    @Published var selectedTab: Tab = .corner
+    /// Sessions or Trends, on the Record tab.
+    @Published var recordSegment: RecordSegment = .sessions
+    /// The Start sheet (the red button).
+    @Published var showingStart = false
+    /// You: profile and settings, opened from the avatar.
+    @Published var showingYou = false
     /// Set by the "Readiness check" shortcut; the Coach tab opens the check.
     @Published var requestReadinessCheck = false
     /// Set by "Run setup again" in You.
@@ -33,7 +42,8 @@ final class AppNavigation: ObservableObject {
 
     func run(_ plan: TrainingPlan) {
         planToRun = plan
-        selectedTab = .live
+        showingYou = false
+        selectedTab = .corner
     }
 
     /// Handles `fight://plan?d=…` links and opened `.fightplan` / `.fightresult` files.
@@ -63,10 +73,10 @@ final class AppNavigation: ObservableObject {
         if let v = prescription.plyo {
             // Plyos open the picker first so the fighter can tick off the gear they brought.
             plyoToPick = v
-            selectedTab = .live
+            selectedTab = .corner
             return
         }
         pendingPrescription = prescription
-        selectedTab = .live
+        selectedTab = .corner
     }
 }

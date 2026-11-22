@@ -28,6 +28,75 @@ struct StartWorkoutSection: View {
     }
 }
 
+/// The red button's sheet: go again in one tap, or pick a door.
+struct StartSheet: View {
+    @Environment(WorkoutSession.self) var session
+    @EnvironmentObject var bleManager: BLEHeartRateManager
+    @EnvironmentObject var workoutStore: WorkoutStore
+    @Environment(\.dismiss) private var dismiss
+    let onPick: (MainChoice) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 12) {
+                    if !workoutStore.workouts.isEmpty || session.queuedPlan != nil || session.activePlan != nil {
+                        ReadyCard(onStarted: { dismiss() })
+                    }
+                    ForEach(MainChoice.allCases) { door in
+                        Button {
+                            onPick(door)
+                            dismiss()
+                        } label: {
+                            DoorTile(door: door)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    NavigationLink {
+                        PlanLibraryView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "list.bullet.rectangle")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 44)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("My plans").font(.headline)
+                                Text(workoutStore.plans.isEmpty ? "Build one, or scan your coach's QR" : "\(workoutStore.plans.count) saved · templates · import")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 14)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if !bleManager.isConnected {
+                        Text("No heart-rate strap connected. You can still train; heart rate just won't be recorded.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding()
+            }
+            .background(Theme.canvas.ignoresSafeArea())
+            .navigationTitle("Start")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .presentationDragIndicator(.visible)
+    }
+}
+
 private struct DoorTile: View {
     let door: MainChoice
 
@@ -35,18 +104,19 @@ private struct DoorTile: View {
         HStack(spacing: 14) {
             Image(systemName: door.icon)
                 .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(door.tint)
                 .frame(width: 44)
             VStack(alignment: .leading, spacing: 2) {
                 Text(door.rawValue).font(.title3.weight(.bold))
-                Text(door.subtitle).font(.subheadline).opacity(0.8)
+                Text(door.subtitle).font(.subheadline).foregroundStyle(.secondary)
             }
             Spacer()
-            Image(systemName: "chevron.right").font(.headline).opacity(0.6)
+            Image(systemName: "chevron.right").font(.headline).foregroundStyle(.tertiary)
         }
-        .foregroundStyle(door.tint)
+        .foregroundStyle(.primary)
         .padding(.horizontal, 16)
-        .padding(.vertical, 18)
-        .background(door.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 18))
+        .padding(.vertical, 20)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -64,14 +134,16 @@ extension MainChoice {
 }
 
 /// The workout that Start will run: last time's, the coach's pick, or a loaded plan.
-private struct ReadyCard: View {
+struct ReadyCard: View {
     @Environment(WorkoutSession.self) var session
     @State private var preparingVoice = false
+    /// Called once the session has started (the Start sheet closes itself).
+    var onStarted: () -> Void = {}
 
     private var header: String {
         if session.queuedPlan != nil { return "Plan ready" }
         if session.activePlan != nil { return "Coach's pick" }
-        return "Go again"
+        return "Same as last time"
     }
 
     var body: some View {
@@ -93,12 +165,17 @@ private struct ReadyCard: View {
                 .accessibilityLabel("Clear")
             }
             Button {
-                guard session.bagEnabled else { session.startWorkout(); return }
+                guard session.bagEnabled else {
+                    session.startWorkout()
+                    onStarted()
+                    return
+                }
                 preparingVoice = true
                 Task {
                     await session.audio.prepareVocabulary(prefs: session.bagPrefs)
                     preparingVoice = false
                     session.startWorkout()
+                    onStarted()
                 }
             } label: {
                 Group {
@@ -113,7 +190,8 @@ private struct ReadyCard: View {
                 .padding(.vertical, 4)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.green)
+            .tint(Theme.red)
+            .controlSize(.large)
             .disabled(preparingVoice)
             .accessibilityLabel(preparingVoice ? "Preparing the coach's voice" : "Start")
         }
@@ -207,7 +285,8 @@ private struct BigRow: View {
             Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
         }
         .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .frame(minHeight: 56)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
     }
 }
@@ -330,10 +409,10 @@ private struct ReadyView: View {
                                     Spacer()
                                     Image(systemName: length == l ? "checkmark.circle.fill" : "circle")
                                         .font(.title3)
-                                        .foregroundStyle(length == l ? Color.green : Color.secondary)
+                                        .foregroundStyle(length == l ? Theme.red : Color.secondary)
                                 }
                                 .padding(12)
-                                .background(length == l ? Color.green.opacity(0.12) : Color(.secondarySystemBackground),
+                                .background(length == l ? Theme.red.opacity(0.12) : Theme.card,
                                             in: RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(.plain)
@@ -373,12 +452,8 @@ private struct ReadyView: View {
                             Label("Start", systemImage: "play.fill")
                         }
                     }
-                    .font(.title3.weight(.bold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
+                .buttonStyle(FightPrimaryButtonStyle())
                 .disabled(preparingVoice)
                 if option.bagCoach {
                     Button("Adjust stance, level and combos") { showingBagSettings = true }

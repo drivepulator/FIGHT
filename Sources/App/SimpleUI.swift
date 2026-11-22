@@ -65,8 +65,8 @@ struct CardBackground: ViewModifier {
         content
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background((tint ?? Color(.secondarySystemBackground)).opacity(tint == nil ? 1 : 0.12),
-                        in: RoundedRectangle(cornerRadius: 20))
+            .background((tint ?? Theme.card).opacity(tint == nil ? 1 : 0.12),
+                        in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
     }
 }
 
