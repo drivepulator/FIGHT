@@ -17,7 +17,11 @@ struct RootView: View {
                 .allowsHitTesting(navigation.selectedTab == .record)
                 .accessibilityHidden(navigation.selectedTab != .record)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        // Every list and scroll view (including pushed screens) gets room under its
+        // content, so nothing ends up hidden behind the tab bar.
+        .contentMargins(.bottom, session.isRecording ? 0 : FightTabBar.height + 16, for: .scrollContent)
+        .contentMargins(.bottom, session.isRecording ? 0 : FightTabBar.height, for: .scrollIndicators)
+        .overlay(alignment: .bottom) {
             // While training, the live screen owns the bottom of the screen.
             if !session.isRecording {
                 FightTabBar()
@@ -35,6 +39,8 @@ struct RootView: View {
 /// Corner · START · Record.
 struct FightTabBar: View {
     @EnvironmentObject var navigation: AppNavigation
+    /// Height above the home indicator, for content margins.
+    static let height: CGFloat = 62
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {

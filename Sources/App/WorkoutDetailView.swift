@@ -140,7 +140,7 @@ struct WorkoutDetailView: View {
                     if workout.roundStats.count >= 2 {
                         roundDecayChartCard
                     }
-                    if !workout.pointsOfInterest.isEmpty {
+                    if workout.hasHeartRate && !workout.pointsOfInterest.isEmpty {
                         poiSection
                     }
                     if !workout.autoHRREvents.isEmpty {
