@@ -697,65 +697,6 @@ struct LiveWorkoutView: View {
 
     // MARK: Hero
 
-    private func heroBPMCard(currentZone: HeartRateZoneInfo, profile: AthleteProfile) -> some View {
-        let totalCalories = session.activeCalories + session.bmrCalories
-        let bpm = bleManager.currentBPM
-        return VStack(spacing: 12) {
-            HStack {
-                Text(currentZone.name.uppercased())
-                    .font(.caption.weight(.heavy))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(currentZone.color.opacity(0.22), in: Capsule())
-                    .foregroundStyle(currentZone.color)
-                Spacer()
-                if let remain = session.pendingRecoveryRemaining {
-                    Label("Auto HRR: \(remain)s", systemImage: "arrow.down.heart.fill")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.cyan.opacity(0.2), in: Capsule())
-                        .foregroundStyle(.cyan)
-                }
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "heart.fill")
-                    .font(.system(size: heroBPMSize * 0.43))
-                    .foregroundStyle(bpm > 0 ? currentZone.color : .secondary)
-                    .symbolEffect(.pulse, isActive: bpm > 0)
-                Text(bpm > 0 ? "\(bpm)" : "--")
-                    .font(.system(size: heroBPMSize, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .animation(.default, value: bpm)
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                Text("BPM")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(bpm > 0 ? "Heart rate \(bpm) beats per minute, \(currentZone.name)" : "No heart rate signal")
-
-            zoneBar(bpm: bpm, profile: profile)
-
-            if session.isRecording {
-            HStack(spacing: 12) {
-                stat("ELAPSED", formatDuration(session.elapsedSeconds), .primary)
-                Divider().frame(height: 28)
-                stat("ACTIVE KCAL", "\(Int(session.activeCalories))", .orange)
-                Divider().frame(height: 28)
-                stat("TOTAL KCAL", "\(Int(totalCalories))", .primary)
-                Divider().frame(height: 28)
-                stat("AVG / MAX", "\(session.liveAverageBPM)/\(session.liveMaxBPM)", .primary)
-            }
-            }
-        }
-        .padding(16)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-    }
-
     private func stat(_ title: String, _ value: String, _ color: Color) -> some View {
         VStack(spacing: 2) {
             Text(title)
@@ -858,56 +799,6 @@ struct LiveWorkoutView: View {
     }
 
     // MARK: Round bell
-
-    private var roundBellCard: some View {
-        VStack(spacing: 10) {
-            Toggle(isOn: sessionBinding.roundTimerEnabled) {
-                Label("Round Bell & Corner Timer", systemImage: "bell.fill")
-                    .font(.subheadline.weight(.bold))
-            }
-            .tint(.orange)
-            .disabled(session.isRecording || session.bagEnabled)
-
-            if session.roundTimerEnabled {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.isRestPeriod ? "ROUND \(session.currentRound) • REST" : "ROUND \(session.currentRound)\(session.roundsLimit.map { " OF \($0)" } ?? "") • WORK")
-                            .font(.caption.weight(.heavy))
-                            .foregroundStyle(session.isRestPeriod ? .cyan : .orange)
-                        Text(formatDuration(session.isRecording ? session.phaseRemaining : session.currentPhaseTarget))
-                            .font(.system(size: 34, weight: .heavy, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(session.isRestPeriod ? .cyan : .primary)
-                    }
-                    Spacer()
-                    if !session.isRecording && !session.bagEnabled {
-                        VStack(alignment: .trailing, spacing: 6) {
-                            Picker("Work", selection: sessionBinding.workDurationSeconds) {
-                                ForEach([30, 60, 90, 120, 180, 240, 300], id: \.self) { s in
-                                    Text("\(formatDuration(TimeInterval(s))) work").tag(s)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            Picker("Rest", selection: sessionBinding.restDurationSeconds) {
-                                ForEach([15, 30, 45, 60, 90, 120], id: \.self) { s in
-                                    Text("\(formatDuration(TimeInterval(s))) rest").tag(s)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                    } else if session.isRecording && !session.isRestPeriod && !session.bagSessionComplete {
-                        Button("End Round") {
-                            session.endWorkPhase(manual: true)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
 
     // MARK: Ghost
 
@@ -1425,99 +1316,6 @@ struct LiveWorkoutView: View {
 
     // MARK: Live: details page
 
-    /// Below the fold: chart, plan, combos, records, notes.
-    private func liveDetailsContent(profile: AthleteProfile) -> some View {
-            VStack(spacing: 16) {
-                if let plan = session.activePlan {
-                    planBanner(plan)
-                }
-                if let autoBanner = session.latestAutoHRRBanner {
-                    Label(autoBanner, systemImage: "arrow.down.heart.fill")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.cyan)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                }
-                if session.run.isActive {
-                    RunLiveCard(run: session.run)
-                }
-                if let record = session.liveRecordBanner {
-                    Label(record, systemImage: "trophy.fill")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.orange)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                }
-                if session.isRunningPlan {
-                    PlanRunnerCard()
-                }
-                if session.bagEnabled || planBagBlockActive {
-                    BagComboCard(audio: session.audio, round: session.currentRound,
-                                 totalRounds: session.roundsLimit ?? session.totalBagRounds,
-                                 isComplete: session.bagSessionComplete)
-                }
-                if session.selectedCategory == .lthrTest {
-                    lthrFieldTestCard
-                }
-                Group {
-                    HStack {
-                        BigNumber(value: formatDuration(session.elapsedSeconds), label: "total", size: 22)
-                        BigNumber(value: "\(Int(session.activeCalories))", label: "active kcal", size: 22)
-                        BigNumber(value: "\(Int(session.activeCalories + session.bmrCalories))", label: "total kcal", size: 22)
-                    }
-                    .card()
-                    if let a = session.liveAlpha1 {
-                        Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
-                              systemImage: "waveform.path.ecg")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(a >= 0.75 ? .green : .orange)
-                    }
-                    liveSparklineCard(profile: profile)
-                    if session.selectedGhost != nil {
-                        ghostSimulatorCard
-                    }
-                    TextField("Corner note…", text: sessionBinding.workoutNotes)
-                        .textFieldStyle(.roundedBorder)
-                }
-            }
-            .padding()
-            .padding(.bottom, 12)
-    }
-
-    /// The round clock: the biggest thing on the screen while training.
-    private var liveClock: some View {
-        VStack(spacing: 6) {
-            if session.roundTimerEnabled {
-                RoundDots(current: session.currentRound, total: session.roundsLimit)
-                Text(session.isRestPeriod ? "Rest" : "Round \(session.currentRound)\(session.roundsLimit.map { " of \($0)" } ?? "")")
-                    .font(.headline)
-                    .foregroundStyle(session.isRestPeriod ? Color.cyan : Color.secondary)
-                Text(formatDuration(session.phaseRemaining))
-                    .font(Theme.number(clockSize))
-                    .foregroundStyle(session.isRestPeriod ? Color.cyan : Color.primary)
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                Text("\(formatDuration(session.elapsedSeconds)) total")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            } else {
-                Text("Time").font(.headline).foregroundStyle(.secondary)
-                Text(formatDuration(session.elapsedSeconds))
-                    .font(Theme.number(clockSize))
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
-    }
-
     /// Glove-sized controls in the bottom quarter: end the round / skip rest, and hold to end.
     private func liveControlBar(height: CGFloat) -> some View {
         let buttonHeight = max(56, height - 32)
@@ -1624,38 +1422,6 @@ struct LiveWorkoutView: View {
         }
         .card()
         .accessibilityElement(children: .combine)
-    }
-
-    private var controlButtons: some View {
-        VStack(spacing: 10) {
-            if !session.isRecording {
-                Button {
-                    session.begin()
-                } label: {
-                    Label(session.selectedCategory == .lthrTest && session.queuedPlan == nil ? "Start 30-Min LTHR Test" : "Start", systemImage: "play.fill")
-                        .font(.title3.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                if !bleManager.isConnected {
-                    Text("No sensor connected. You can still record time and rounds.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Button(role: .destructive) {
-                    showingFinishConfirm = true
-                } label: {
-                    Label("Finish Workout", systemImage: "stop.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

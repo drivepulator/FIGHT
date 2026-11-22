@@ -5,29 +5,6 @@ import SwiftUI
 /// What's left to do after a door's sheet closes (these open their own screens).
 enum ChooserFollowUp { case plyo, mix }
 
-/// Fight · Roadwork · Conditioning, then "Go again" with one Start button.
-struct StartWorkoutSection: View {
-    @Environment(WorkoutSession.self) var session
-    @EnvironmentObject var bleManager: BLEHeartRateManager
-    let onPick: (MainChoice) -> Void
-
-    var body: some View {
-        VStack(spacing: 10) {
-            ForEach(MainChoice.allCases) { door in
-                Button { onPick(door) } label: { DoorTile(door: door) }
-                    .buttonStyle(.plain)
-            }
-            ReadyCard()
-            if !bleManager.isConnected {
-                Text("No heart-rate strap connected. You can still train; heart rate just won't be recorded.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-    }
-}
-
 /// The red button's sheet: go again in one tap, or pick a door.
 struct StartSheet: View {
     @Environment(WorkoutSession.self) var session

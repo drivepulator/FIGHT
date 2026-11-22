@@ -66,12 +66,6 @@ struct CoachView: View {
         workoutStore.refreshCoach()
     }
 
-    private func consumeReadinessRequest() {
-        guard navigation.requestReadinessCheck else { return }
-        navigation.requestReadinessCheck = false
-        showingReadinessCheck = true
-    }
-
 
     @ViewBuilder
     private func content(_ report: CoachReport) -> some View {
