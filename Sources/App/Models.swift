@@ -1160,7 +1160,13 @@ struct SavedWorkout: Codable, Identifiable {
     /// with session-RPE once the athlete has rated the session (HR alone
     /// under-reads sparring, clinch and strength work).
     /// False when no strap was worn (no heart rate to judge zones, recovery or load by).
-    var hasHeartRate: Bool { averageBPM > 0 && zoneSeconds.values.reduce(0, +) >= 60 }
+    /// Heart rate was really recorded: readings for a full minute, or for at least half of a short
+    /// session. Low heart rate still counts; it only has to be there.
+    var hasHeartRate: Bool {
+        guard averageBPM > 0 else { return false }
+        let covered = zoneSeconds.values.reduce(0, +)
+        return covered >= 60 || (covered >= 15 && covered >= duration * 0.5)
+    }
 
     var effectiveLoad: Double {
         guard rpeRated else { return trimpScore }

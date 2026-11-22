@@ -146,6 +146,24 @@ final class WorkoutTypeRulesTests: XCTestCase {
         XCTAssertTrue(WorkoutCategory.bjj.focusOptions(disciplines: ["BJJ"]).contains("Guard"))
     }
 
+    func testLowHeartRateStillCountsAsRecorded() {
+        let start = Date().addingTimeInterval(-600)
+        func session(duration: Double, covered: Double, avg: Int) -> SavedWorkout {
+            SavedWorkout(
+                id: UUID(), profileID: UUID(), profileName: "Test", category: .heavyBag, drillTag: .bagWork,
+                rpe: 5, notes: "", startDate: start, endDate: start.addingTimeInterval(duration), duration: duration,
+                averageBPM: avg, maxBPM: avg + 5, minBPM: avg - 5, activeCalories: 0, bmrCalories: 2, calories: 2,
+                epocBonusCalories: 0, trimpScore: 0, cardiacDriftPercent: 0, hrr60Drop: nil, autoHRREvents: [],
+                rmssdMs: nil, strikesCuedCount: 0, ghostBaselineName: nil, ghostAvgDeltaBPM: nil,
+                zoneSeconds: [1: covered], roundStats: [], pointsOfInterest: [], samples: [], isCompressedArchive: false, archiveFileName: nil
+            )
+        }
+        XCTAssertTrue(session(duration: 50, covered: 45, avg: 72).hasHeartRate, "a short session standing still at 72 bpm has heart rate")
+        XCTAssertTrue(session(duration: 1800, covered: 1700, avg: 75).hasHeartRate)
+        XCTAssertFalse(session(duration: 1800, covered: 20, avg: 75).hasHeartRate, "a few stray readings don't count")
+        XCTAssertFalse(session(duration: 60, covered: 50, avg: 0).hasHeartRate)
+    }
+
     func testReviewWithoutHeartRateMakesNoZoneClaims() {
         let w = strapless(.roadwork, drill: .aerobicZ2)
         XCTAssertFalse(w.hasHeartRate)
