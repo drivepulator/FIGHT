@@ -1261,9 +1261,11 @@ struct LiveWorkoutView: View {
     private func liveHeartStrip(currentZone: HeartRateZoneInfo) -> some View {
         let bpm = bleManager.currentBPM
         let live = bleManager.isConnected && bpm > 0
-        let tint = live ? currentZone.color : Color.secondary
+        let out = live ? session.hrTargetPosition : 0
+        let tint = !live ? Color.secondary : (out != 0 ? Color.orange : currentZone.color)
         let avg = session.liveAverageBPM
         let top = session.liveMaxBPM
+        let target = session.hrTarget
         return HStack(spacing: 12) {
             Image(systemName: "heart.fill")
                 .font(.title2)
@@ -1274,14 +1276,21 @@ struct LiveWorkoutView: View {
                     .font(Theme.number(44))
                     .contentTransition(.numericText())
                     .animation(.default, value: bpm)
-                Text(live ? currentZone.name : (bleManager.isConnected ? "No signal" : "No strap · tap to connect"))
+                Text(live ? (out > 0 ? "Above target" : out < 0 ? "Under target" : currentZone.name)
+                          : (bleManager.isConnected ? "No signal" : "No strap · tap to connect"))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(tint)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text("avg \(avg > 0 ? "\(avg)" : "--")")
-                Text("max \(top > 0 ? "\(top)" : "--")")
+                if let target {
+                    Text(target.label)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(out != 0 ? Color.orange : Color.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                Text("avg \(avg > 0 ? "\(avg)" : "--") · max \(top > 0 ? "\(top)" : "--")")
             }
             .font(.subheadline.weight(.semibold))
             .monospacedDigit()

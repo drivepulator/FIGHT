@@ -300,6 +300,9 @@ final class WorkoutSession {
     private var lastRedlineAlertTime: TimeInterval = -999
     private var lastGhostAlertTime: TimeInterval = -999
     private var lastPlanAlertTime: TimeInterval = -999
+    @ObservationIgnored private var hrAlertTracker = HRAlertTracker()
+    /// +1 above target, -1 under, 0 in range (for the live screen).
+    private(set) var hrTargetPosition = 0
     private var lthrWarmupAnnounced = false
     private var finalRoundAnnounced = false
 
@@ -946,6 +949,8 @@ final class WorkoutSession {
         lastRedlineAlertTime = -999
         lastGhostAlertTime = -999
         lastPlanAlertTime = -999
+        hrAlertTracker = HRAlertTracker()
+        hrTargetPosition = 0
         lthrWarmupAnnounced = false
         finalRoundAnnounced = false
         bagSessionComplete = false
@@ -1315,8 +1320,7 @@ final class WorkoutSession {
                 roundEndPeakBPM = max(roundEndPeakBPM, bpm)
             }
             evaluateAutomaticHRR(bpm: bpm, profile: p)
-            evaluateLiveAudioCoaching(bpm: bpm, zone: z, profile: p, coachCfg: coachCfg)
-            evaluatePlan(bpm: bpm, coachCfg: coachCfg)
+            evaluateTargetAlerts(bpm: bpm, coachCfg: coachCfg)
             evaluateEncouragement(bpm: bpm, profile: p)
             if Int(elapsedSeconds) % 10 == 0 && samples.count >= 60 {
                 // Smoothed so one noisy window doesn't flip the threshold readout.
@@ -1365,7 +1369,7 @@ final class WorkoutSession {
 
         if !isRestPeriod {
             if before > 30 && after <= 30 && warningsOn && coachCfg.announceRoundWarnings && workDurationSeconds >= 90 {
-                audio.announceCoachingCue("30 seconds, heart rate \(bpm)", enabled: true)
+                audio.announceCoachingCue("30 seconds", enabled: true)
             }
             if before > 10 && after <= 10 {
                 if coachCfg.clapperWarnings { audio.playClapper() }
@@ -1429,7 +1433,7 @@ final class WorkoutSession {
         recordRound(stoolDrop: drop)
         if let drop, checkRecoveryRecord(drop) {
             // Record announcement replaces the normal recovery cue.
-        } else if let drop, coachCfg.masterEnabled && coachCfg.announceStoolRecovery {
+        } else if let drop, coachCfg.masterEnabled && coachCfg.announceStoolRecovery && profile.encouragement {
             audio.announceCoachingCue("Recovered \(drop) beats.", enabled: true)
         }
         currentRound += 1
@@ -1666,6 +1670,7 @@ final class WorkoutSession {
         isPaused = false
         pausedForCall = false
         lastTick = now
+        hrAlertTracker.reset()
         run.holdDistance = false
         audio.prepareForWorkout(settings: profile.audioCoach)
         audio.announceCoachingCue("Back to work.", enabled: true)
@@ -1700,7 +1705,8 @@ final class WorkoutSession {
     private var hadSignal: Bool { !samples.isEmpty }
 
     private func speakDebrief(_ w: SavedWorkout, history: [SavedWorkout], profile p: AthleteProfile) {
-        guard p.audioCoach.masterEnabled, w.duration >= 300 else { return }
+        // "Alerts only" coach: no spoken debrief either.
+        guard p.audioCoach.masterEnabled, p.encouragement, w.duration >= 300 else { return }
         let u = AVSpeechUtterance(string: SessionDebrief.text(for: w, history: history, profile: p))
         u.rate = AVSpeechUtteranceDefaultSpeechRate
         debriefVoice.usesApplicationAudioSession = false
@@ -1784,69 +1790,51 @@ final class WorkoutSession {
         }
     }
 
-    private func evaluateLiveAudioCoaching(bpm: Int, zone: HeartRateZoneInfo, profile: AthleteProfile, coachCfg: AudioCoachSettings) {
-        guard coachCfg.masterEnabled else { return }
-        // During bag work the combos are the priority: keep cues to essentials.
-        let bagActive = bagEnabled && !isRestPeriod
-
-        if coachCfg.zone2CeilingAlert && (selectedCategory == .roadwork || selectedDrillTag == .aerobicZ2) {
-            let z2Max = profile.activeZones.z2Max
-            if bpm > z2Max && (elapsedSeconds - lastZone2AlertTime) >= 45 {
-                lastZone2AlertTime = elapsedSeconds
-                audio.announceCoachingCue("Zone 2 ceiling, \(bpm). Ease off.", enabled: true)
-            }
+    /// What this session's heart rate should sit in (plan step, coach's pick, or the session type).
+    var hrTarget: HRTarget? {
+        if let r = activeTargetRange {
+            return HRTarget(low: r.lowerBound, high: r.upperBound, label: "Target · \(r.lowerBound)–\(r.upperBound)")
         }
-
-        if coachCfg.announceZoneCrossings && zone.number != lastAnnouncedZone && elapsedSeconds > 15 {
-            if zone.number >= 3 && !bagActive {
-                audio.announceCoachingCue("Zone \(zone.number), \(bpm).", enabled: true)
-            }
-            lastAnnouncedZone = zone.number
-        } else if lastAnnouncedZone == 0 {
-            lastAnnouncedZone = zone.number
-        }
-
-        let redline = Int(Double(profile.effectiveMaxHR) * 0.92)
-        if bpm >= redline {
-            redlineSecondsAccumulator += 1
-            if coachCfg.announceRedlineWarning && redlineSecondsAccumulator >= 45 && (elapsedSeconds - lastRedlineAlertTime) >= 90 {
-                lastRedlineAlertTime = elapsedSeconds
-                audio.announceCoachingCue("Sustained redline, \(bpm).", enabled: true)
-            }
-        } else {
-            redlineSecondsAccumulator = 0
-        }
-
-        if coachCfg.announceGhostDelta, !bagActive, let ghost = selectedGhost,
-           let g = ghost.interpolatedBPM(at: elapsedSeconds), (elapsedSeconds - lastGhostAlertTime) >= 75 {
-            let diff = bpm - g
-            if abs(diff) >= 8 {
-                lastGhostAlertTime = elapsedSeconds
-                audio.announceCoachingCue(diff > 0 ? "Ghost check: \(diff) beats above." : "Ghost check: \(abs(diff)) beats more efficient.", enabled: true)
-            }
-        }
-
-        if coachCfg.periodicMinutes > 0 && !bagActive {
-            let minute = Int(elapsedSeconds) / 60
-            if minute > 0 && minute != lastPeriodicMinute && minute % coachCfg.periodicMinutes == 0 {
-                lastPeriodicMinute = minute
-                audio.announceCoachingCue("\(minute) minutes, \(bpm), zone \(zone.number).", enabled: true)
-            }
-        }
+        return HRTargetRules.target(drill: selectedDrillTag, category: selectedCategory,
+                                    zones: profile.activeZones, maxHR: profile.effectiveMaxHR)
     }
 
-    private func evaluatePlan(bpm: Int, coachCfg: AudioCoachSettings) {
-        let settle: TimeInterval = isRunningPlan ? 45 : 90
-        guard let range = activeTargetRange, coachCfg.masterEnabled,
-              elapsedSeconds - (isRunningPlan ? blockStartElapsed : 0) > settle,
-              elapsedSeconds - lastPlanAlertTime >= 75,
-              !(roundTimerEnabled && isRestPeriod) else { return }
-        if bpm > range.upperBound + 4 {
-            lastPlanAlertTime = elapsedSeconds
-            audio.announceCoachingCue("Above target. Ease back under \(range.upperBound).", enabled: true)
-        } else if isRunningPlan, let b = currentBlock, b.kind == .steady || b.kind == .timedDrill, bpm < range.lowerBound - 6 {
-            lastPlanAlertTime = elapsedSeconds
-            audio.announceCoachingCue("Below target. Pick it up to \(range.lowerBound).", enabled: true)
+    /// Whether "pick it up" alerts apply: easy runs, and steady plan steps.
+    private var hrAlertsAllowLow: Bool {
+        if isRunningPlan {
+            guard let b = currentBlock else { return false }
+            return b.kind == .steady || b.kind == .timedDrill
+        }
+        if activePlan != nil { return false }
+        return selectedDrillTag == .aerobicZ2 && selectedCategory != .walk
+    }
+
+    /// Time to settle in before alerts: a warm-up on runs, the start of each round or plan step.
+    private var hrAlertsSettled: Bool {
+        if isRunningPlan { return elapsedSeconds - blockStartElapsed >= 45 }
+        if roundTimerEnabled { return elapsedSeconds - currentRoundStartElapsed >= 45 && elapsedSeconds >= 45 }
+        if selectedCategory.isRun || selectedCategory == .walk { return elapsedSeconds >= 180 }
+        return elapsedSeconds >= 60
+    }
+
+    /// Voice only when you're out of range for what you're doing: "Slow down. Above target." or
+    /// "Pick it up. Under target." Nothing when you're in range, and no running commentary.
+    private func evaluateTargetAlerts(bpm: Int, coachCfg: AudioCoachSettings) {
+        guard let target = hrTarget else {
+            hrTargetPosition = 0
+            return
+        }
+        let allowLow = hrAlertsAllowLow
+        let resting = (roundTimerEnabled && isRestPeriod) || isInPlanTransition || planComplete || bagSessionComplete
+        hrTargetPosition = resting ? 0 : HRAlertTracker.position(bpm: bpm, target: target, buffer: 4, allowLow: allowLow)
+        guard coachCfg.masterEnabled, coachCfg.zone2CeilingAlert, !resting, hrAlertsSettled else {
+            hrAlertTracker.reset()
+            return
+        }
+        switch hrAlertTracker.update(bpm: bpm, target: target, at: elapsedSeconds, allowLow: allowLow) {
+        case 1: audio.announceCoachingCue("Slow down. Above target.", enabled: true)
+        case -1: audio.announceCoachingCue("Pick it up. Under target.", enabled: true)
+        default: break
         }
     }
 

@@ -122,7 +122,10 @@ struct ProfileSettingsView: View {
                             Label("My Training", systemImage: "figure.martial.arts")
                         }
                     }
-                    Toggle(isOn: binding(for: \.encouragement)) {
+                    Picker(selection: binding(for: \.encouragement)) {
+                        Text("Like a coach").tag(true)
+                        Text("Alerts only").tag(false)
+                    } label: {
                         Label("Corner coach", systemImage: "megaphone.fill")
                     }
                     Picker(selection: $getReadySeconds) {
@@ -138,7 +141,7 @@ struct ProfileSettingsView: View {
                         Label("Pause for phone calls", systemImage: "phone.arrow.down.left")
                     }
                 } footer: {
-                    Text("Corner coach pushes you when your pace drops and tells you to breathe when you're redlining. Get ready gives you time to glove up before rounds and bag work; skip it with Start now or a nod. A call pauses the clock until you tap Resume.")
+                    Text("Like a coach: pushes you when your pace drops, tells you to breathe, reads your recovery and sums up the session. Alerts only: speaks only when your heart rate is out of range. Get ready gives you time to glove up before rounds and bag work; skip it with Start now or a nod. A call pauses the clock until you tap Resume.")
                 }
 
                 Group {
@@ -346,16 +349,12 @@ struct ProfileSettingsView: View {
                     .padding(.vertical, 4)
                 }
 
-                Section("Voice Coaching") {
-                    Toggle("Enable Voice HR Coaching", isOn: binding(for: \.audioCoach.masterEnabled))
+                Section {
+                    Toggle("Voice coaching", isOn: binding(for: \.audioCoach.masterEnabled))
 
                     if profile.audioCoach.masterEnabled {
-                        Toggle("Zone Crossing Alerts (Z2 → Z3 → Z4 → Z5)", isOn: binding(for: \.audioCoach.announceZoneCrossings))
-                        Toggle("Roadwork Zone 2 Ceiling Guard", isOn: binding(for: \.audioCoach.zone2CeilingAlert))
-                        Toggle("Round Warnings (1m / 30s / 10s + BPM)", isOn: binding(for: \.audioCoach.announceRoundWarnings))
-                        Toggle("Stool Rest Recovery Readout (HRR-60)", isOn: binding(for: \.audioCoach.announceStoolRecovery))
-                        Toggle("Sustained Redline Warning (>92% MaxHR)", isOn: binding(for: \.audioCoach.announceRedlineWarning))
-                        Toggle("Ghost Opponent Lead / Delta Alerts", isOn: binding(for: \.audioCoach.announceGhostDelta))
+                        Toggle("Heart-rate alerts", isOn: binding(for: \.audioCoach.zone2CeilingAlert))
+                        Toggle("Round warnings (30 s, next round in 10 s)", isOn: binding(for: \.audioCoach.announceRoundWarnings))
 
                         Toggle("10-Second Clapper Warnings", isOn: binding(for: \.audioCoach.clapperWarnings))
                         Toggle("Lower Music While Coaching", isOn: binding(for: \.audioCoach.duckMusic))
@@ -368,14 +367,9 @@ struct ProfileSettingsView: View {
                             Slider(value: binding(for: \.audioCoach.bellVolume), in: 0.2...1.0)
                         }
 
-                        Picker("Periodic BPM & Zone Check-In", selection: binding(for: \.audioCoach.periodicMinutes)) {
-                            Text("Off").tag(0)
-                            Text("Every 1 min").tag(1)
-                            Text("Every 2 min").tag(2)
-                            Text("Every 3 min").tag(3)
-                            Text("Every 5 min").tag(5)
-                        }
                     }
+                } footer: {
+                    Text("Heart-rate alerts speak only when you've been out of range for 20 seconds: \"Slow down. Above target.\" or \"Pick it up. Under target.\" Easy runs aim for zone 2, technique stays under zone 3, hard rounds stay under redline.")
                 }
 
                 Section {
