@@ -74,8 +74,18 @@ struct HoldToEndButton: View {
     @State private var holding = false
 
     var body: some View {
-        Label(holding ? "Keep holding…" : title, systemImage: "stop.fill")
-            .font(.headline)
+        Group {
+            if height >= 90 {
+                // Tall button: big icon over the words, easy to find with a glove.
+                VStack(spacing: 10) {
+                    Image(systemName: "stop.fill").font(.system(size: 32, weight: .bold))
+                    Text(holding ? "Keep holding…" : title).font(.title3.weight(.bold))
+                }
+            } else {
+                Label(holding ? "Keep holding…" : title, systemImage: "stop.fill")
+                    .font(.headline)
+            }
+        }
             .foregroundStyle(.primary)
             .frame(maxWidth: .infinity)
             .frame(height: height)
@@ -87,10 +97,10 @@ struct HoldToEndButton: View {
                 }
             }
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.red, lineWidth: 2)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Theme.red, lineWidth: 2.5)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .contentShape(Rectangle())
         .onLongPressGesture(minimumDuration: holdSeconds, maximumDistance: 40) {
             holding = false

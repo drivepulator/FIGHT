@@ -35,15 +35,22 @@ struct LiveWorkoutView: View {
         NavigationStack {
             Group {
                 if session.isRecording {
-                    // Fixed fight clock first; swipe for the details.
-                    TabView(selection: $livePage) {
-                        liveMainPage(currentZone: currentZone)
-                            .tag(0)
-                        liveDetailsPage(profile: profile)
-                            .tag(1)
+                    // Bottom quarter: big controls. Above: the fight clock fills the screen,
+                    // and the details are a scroll away.
+                    GeometryReader { g in
+                        let controls = min(max(150, g.size.height * 0.27), 240)
+                        VStack(spacing: 0) {
+                            ScrollView {
+                                VStack(spacing: 16) {
+                                    liveMainPage(currentZone: currentZone)
+                                        .frame(height: max(320, g.size.height - controls))
+                                    liveDetailsContent(profile: profile)
+                                }
+                            }
+                            .scrollIndicators(.hidden)
+                            liveControlBar(height: controls)
+                        }
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .always))
-                    .indexViewStyle(.page(backgroundDisplayMode: .interactive))
                 } else {
                     ScrollView {
                         VStack(spacing: 16) {
@@ -76,11 +83,6 @@ struct LiveWorkoutView: View {
                 }
             }
             .background(Theme.canvas.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if session.isRecording {
-                    liveControlBar
-                }
-            }
             .navigationTitle(session.isRecording ? "" : "Corner")
             .navigationBarTitleDisplayMode(session.isRecording ? .inline : .large)
             .toolbar {
@@ -1113,10 +1115,14 @@ struct LiveWorkoutView: View {
             liveCallLine
             liveHeartStrip(currentZone: currentZone)
             liveWarning
+            Label("Scroll for chart, combos and notes", systemImage: "chevron.down")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal)
         .padding(.top, 4)
-        .padding(.bottom, 34)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder
@@ -1271,9 +1277,8 @@ struct LiveWorkoutView: View {
 
     // MARK: Live: details page
 
-    /// Swipe left: chart, plan, combos, records, notes.
-    private func liveDetailsPage(profile: AthleteProfile) -> some View {
-        ScrollView {
+    /// Below the fold: chart, plan, combos, records, notes.
+    private func liveDetailsContent(profile: AthleteProfile) -> some View {
             VStack(spacing: 16) {
                 if let plan = session.activePlan {
                     planBanner(plan)
@@ -1330,8 +1335,7 @@ struct LiveWorkoutView: View {
                 }
             }
             .padding()
-            .padding(.bottom, 30)
-        }
+            .padding(.bottom, 12)
     }
 
     /// The round clock: the biggest thing on the screen while training.
@@ -1366,9 +1370,10 @@ struct LiveWorkoutView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// Glove-sized controls at the bottom: end the round / skip rest, and hold to end.
-    private var liveControlBar: some View {
-        HStack(spacing: 12) {
+    /// Glove-sized controls in the bottom quarter: end the round / skip rest, and hold to end.
+    private func liveControlBar(height: CGFloat) -> some View {
+        let buttonHeight = max(56, height - 32)
+        return HStack(spacing: 12) {
             if session.roundTimerEnabled && !session.bagSessionComplete {
                 Button {
                     if session.isRestPeriod {
@@ -1377,23 +1382,28 @@ struct LiveWorkoutView: View {
                         session.endWorkPhase(manual: true)
                     }
                 } label: {
-                    Label(session.isRestPeriod ? "Skip rest" : "End round",
-                          systemImage: session.isRestPeriod ? "forward.fill" : "bell.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .contentShape(Rectangle())
+                    VStack(spacing: 10) {
+                        Image(systemName: session.isRestPeriod ? "forward.fill" : "bell.fill")
+                            .font(.system(size: 32, weight: .bold))
+                        Text(session.isRestPeriod ? "Skip rest" : "End round")
+                            .font(.title3.weight(.bold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: buttonHeight)
+                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .sensoryFeedback(.impact(weight: .heavy), trigger: session.isRestPeriod)
             }
-            HoldToEndButton(height: 56) { showingFinishConfirm = true }
+            HoldToEndButton(height: buttonHeight) { showingFinishConfirm = true }
         }
-        .frame(height: 56)
         .padding(.horizontal)
-        .padding(.top, 8)
-        .padding(.bottom, 2)
-        .background(.bar)
+        .padding(.vertical, 16)
+        .frame(height: height)
+        .frame(maxWidth: .infinity)
+        .background(Theme.card.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { Divider() }
     }
 
     /// Heart rate before you start: one quiet line.
