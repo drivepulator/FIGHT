@@ -218,6 +218,7 @@ final class WorkoutSession {
     /// Zones before the last LTHR test, so its result can be undone.
     private var previousThreshold: (lthr: Int, method: ZoneCalculationMethod)?
     private(set) var liveAlpha1: Double?
+    @ObservationIgnored private var lastAlpha1Elapsed: TimeInterval = 0
     private(set) var pendingRecoveryRemaining: Int?
     private(set) var bagSessionComplete = false
 
@@ -951,6 +952,7 @@ final class WorkoutSession {
         bagSessionComplete = false
         requestFinishPrompt = false
         liveAlpha1 = nil
+        lastAlpha1Elapsed = 0
         audio.strikesCuedCount = 0
         comboEvents = []
         bestRecoveryRecord = store.map { Records.bestRecovery(workouts: $0.workouts, profileID: $0.activeProfileID) } ?? 0
@@ -1318,7 +1320,10 @@ final class WorkoutSession {
             evaluateLiveAudioCoaching(bpm: bpm, zone: z, profile: p, coachCfg: coachCfg)
             evaluatePlan(bpm: bpm, coachCfg: coachCfg)
             evaluateEncouragement(bpm: bpm, profile: p)
-            if Int(elapsedSeconds) % 10 == 0 && samples.count >= 60 {
+            // Every 10 s of session time. A modulo on whole seconds missed windows whenever a
+            // late or skipped timer tick jumped over the exact second.
+            if elapsedSeconds - lastAlpha1Elapsed >= 10 && samples.count >= 60 {
+                lastAlpha1Elapsed = elapsedSeconds
                 // Smoothed so one noisy window doesn't flip the threshold readout.
                 if let a = HRVMath.liveAlpha1(recentSamples: Array(samples.suffix(150))) {
                     liveAlpha1 = liveAlpha1.map { $0 * 0.6 + a * 0.4 } ?? a
