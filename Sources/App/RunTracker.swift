@@ -44,6 +44,10 @@ final class RunTracker {
     @ObservationIgnored private var splitTracker = SplitTracker(unit: 1000)
     @ObservationIgnored private var elevation = ElevationGain()
     @ObservationIgnored private var lastFixAt: TimeInterval = -100
+    /// GPS has given at least one good position this run.
+    var hasFix: Bool { lastFixAt >= 0 }
+    /// Metres climbed so far (smoothed).
+    var elevationGainM: Double { elevation.total }
     @ObservationIgnored private var lastExternalFixAt: TimeInterval = -100
     @ObservationIgnored private var paceWindow: [(t: TimeInterval, d: Double)] = []
     @ObservationIgnored private var lastAltitude: Double?

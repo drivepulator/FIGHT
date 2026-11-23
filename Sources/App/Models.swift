@@ -501,10 +501,11 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         case .lactateThreshold:
             let lt = Double(lactateThresholdHR)
             return ZoneThresholds(
-                z1Max: Int(round(lt * 0.81)),
+                // Friel's running zones (the cycling set starts zone 2 too low for roadwork and rounds)
+                z1Max: Int(round(lt * 0.85)),
                 z2Max: Int(round(lt * 0.89)),
-                z3Max: Int(round(lt * 0.95)),
-                z4Max: Int(round(lt * 1.00))
+                z3Max: Int(round(lt * 0.94)),
+                z4Max: Int(round(lt * 0.99))
             )
         case .percentMaxHR:
             return ZoneThresholds(
@@ -1234,15 +1235,28 @@ enum FighterAnalytics {
         } else {
             keytel = (-59.3954 + 0.45 * hr + 0.380 * vo2max + 0.103 * w + 0.274 * a) / 4.184
         }
-        // The formula was fitted on exercise heart rates and goes wrong near rest: below ~100 BPM
-        // blend into a resting-metabolism estimate scaled by heart-rate reserve.
+        // The formula was fitted on moderate-to-hard exercise and runs high at light effort (it read
+        // about double for an easy walk). Below 25% of heart-rate reserve use a resting-metabolism
+        // estimate scaled by reserve; blend to the formula by 50% of reserve, where it holds.
         let reserve = max(0, min(1, (hr - Double(profile.restingHR)) / Double(max(35, profile.effectiveMaxHR - profile.restingHR))))
         let easy = profile.bmrCaloriesPerMinute * (1 + 6 * reserve)
-        let u = max(0, min(1, (hr - 85) / 15))
+        let u = max(0, min(1, (reserve - 0.25) / 0.25))
         let totalKcalPerMin = easy * (1 - u) + max(easy, keytel) * u
         let total = max(bmr, totalKcalPerMin * minutes)
         let active = max(0, total - bmr)
         return (active, bmr, total)
+    }
+
+    /// Active calories from movement on roadwork (ACSM walking and running equations): oxygen per
+    /// metre covered plus per metre climbed, above resting. Far more reliable than heart rate when
+    /// distance and climb are measured. 1 L of oxygen ≈ 5 kcal.
+    static func movementActiveCalories(distanceM: Double, climbM: Double, speedMetersPerMinute: Double, weightKg: Double) -> Double {
+        guard distanceM > 0 || climbM > 0 else { return 0 }
+        let running = speedMetersPerMinute >= 134   // about 8 km/h: above this, running costs apply
+        let perMetre = running ? 0.2 : 0.1           // ml O2 per kg per metre on the flat
+        let perClimb = running ? 0.9 : 1.8           // ml O2 per kg per metre climbed (S × grade × 1.8 / 0.9)
+        let mlPerKg = perMetre * max(0, distanceM) + perClimb * max(0, climbM)
+        return mlPerKg * weightKg / 1000 * 5
     }
 
     static func calculateTRIMP(samples: [HeartRatePoint], profile: AthleteProfile) -> Double {

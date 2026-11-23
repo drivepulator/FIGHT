@@ -310,6 +310,10 @@ final class WorkoutSession {
     private var lastPlanAlertTime: TimeInterval = -999
     @ObservationIgnored private var hrAlertTracker = HRAlertTracker()
     @ObservationIgnored private var hrEstimator = HREstimator()
+    @ObservationIgnored private var lastMoveDistance = 0.0
+    @ObservationIgnored private var lastMoveClimb = 0.0
+    /// Roadwork with a GPS position: calories come from movement, not heart rate.
+    private var usesMovementCalories: Bool { run.isActive && !run.permissionDenied && run.hasFix }
     /// Estimated heart rate while the strap is off (nil when real readings are coming in).
     private(set) var estimatedBPM: Int?
     /// Estimates kept for the session (shown apart from real data).
@@ -973,6 +977,8 @@ final class WorkoutSession {
         hrAlertTracker = HRAlertTracker()
         hrTargetPosition = 0
         hrEstimator = HREstimator()
+        lastMoveDistance = 0
+        lastMoveClimb = 0
         estimatedBPM = nil
         estimatedSamples = []
         estimatedCalories = 0
@@ -1064,7 +1070,9 @@ final class WorkoutSession {
             sumBPM += r.bpm
             maxBPMSeen = max(maxBPMSeen, r.bpm)
             zoneSeconds[p.zone(for: r.bpm).number, default: 0] += 1
-            activeCalories += FighterAnalytics.calculateCalorieBreakdown(bpm: r.bpm, durationSeconds: 1, profile: p).active
+            if !usesMovementCalories {
+                activeCalories += FighterAnalytics.calculateCalorieBreakdown(bpm: r.bpm, durationSeconds: 1, profile: p).active
+            }
         }
         samples.sort { $0.timestamp < $1.timestamp }
         if let first = fill.first?.time, let last = fill.last?.time, !estimatedSamples.isEmpty {
@@ -1361,7 +1369,17 @@ final class WorkoutSession {
         let p = profile
         let coachCfg = p.audioCoach
 
-        let cal = FighterAnalytics.calculateCalorieBreakdown(bpm: bpm, durationSeconds: creditedDT, profile: p)
+        var cal = FighterAnalytics.calculateCalorieBreakdown(bpm: bpm, durationSeconds: creditedDT, profile: p)
+        if usesMovementCalories {
+            // Roadwork with GPS: burn from distance and climb, not heart rate.
+            let dDist = max(0, run.distanceM - lastMoveDistance)
+            let dClimb = max(0, run.elevationGainM - lastMoveClimb)
+            lastMoveDistance = run.distanceM
+            lastMoveClimb = run.elevationGainM
+            let speed = run.currentPace > 0 ? run.unitMeters / run.currentPace * 60 : dDist / max(1, creditedDT) * 60
+            cal.active = FighterAnalytics.movementActiveCalories(distanceM: dDist, climbM: dClimb,
+                                                                 speedMetersPerMinute: speed, weightKg: p.weightKg)
+        }
         activeCalories += cal.active
         bmrCalories += cal.bmr
 
@@ -1381,7 +1399,9 @@ final class WorkoutSession {
             // Strap off: estimate, but keep it apart from real data.
             estimatedBPM = est
             estimatedSamples.append(HeartRatePoint(timestamp: now, elapsedSeconds: elapsedSeconds, bpm: est, rrIntervalsMs: []))
-            estimatedCalories += FighterAnalytics.calculateCalorieBreakdown(bpm: est, durationSeconds: creditedDT, profile: p).active
+            if !usesMovementCalories {
+                estimatedCalories += FighterAnalytics.calculateCalorieBreakdown(bpm: est, durationSeconds: creditedDT, profile: p).active
+            }
         } else {
             estimatedBPM = nil
         }

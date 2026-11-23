@@ -661,30 +661,6 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
-    var acuteChronicWorkloadRatio: (ratio: Double, status: String) {
-        let now = Date()
-        let sevenDaysAgo = now.addingTimeInterval(-7 * 86400)
-        let twentyEightDaysAgo = now.addingTimeInterval(-28 * 86400)
-
-        let acuteLoad = workouts.filter { $0.startDate >= sevenDaysAgo }.reduce(0.0) { $0 + $1.effectiveLoad }
-        let chronicTotal = workouts.filter { $0.startDate >= twentyEightDaysAgo }.reduce(0.0) { $0 + $1.effectiveLoad }
-        let chronicWeeklyAvg = chronicTotal / 4.0
-
-        guard chronicWeeklyAvg >= 20 else {
-            return (1.0, "Building Baseline")
-        }
-        let ratio = acuteLoad / chronicWeeklyAvg
-        if ratio < 0.8 {
-            return (ratio, "Fresh / Tapered")
-        } else if ratio <= 1.3 {
-            return (ratio, "Optimal Fight Zone")
-        } else if ratio <= 1.5 {
-            return (ratio, "High Camp Strain")
-        } else {
-            return (ratio, "Overreach Risk")
-        }
-    }
-
     func importTCXGhost(from url: URL) -> GhostSession? {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
