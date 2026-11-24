@@ -2042,7 +2042,7 @@ final class WorkoutSession {
     private var draftsDirectory: URL? {
         if let d = cachedDraftsDirectory { return d }
         guard let store else { return nil }
-        let dir = store.documentsDirectory.appendingPathComponent("Drafts", isDirectory: true)
+        let dir = store.internalDirectory.appendingPathComponent("Drafts", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         cachedDraftsDirectory = dir
         return dir
