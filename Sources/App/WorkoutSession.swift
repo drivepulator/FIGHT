@@ -325,6 +325,8 @@ final class WorkoutSession {
     /// When the current gap in heart rate started (the last real reading before it).
     @ObservationIgnored private var gapFrom: Date?
     @ObservationIgnored private var lastRealAt: Date?
+    /// Completed pause intervals, used to compute per-timestamp elapsed time for logger gap fills.
+    @ObservationIgnored private var completedPauseIntervals: [(start: Date, end: Date)] = []
     /// +1 above target, -1 under, 0 in range (for the live screen).
     private(set) var hrTargetPosition = 0
     private var lthrWarmupAnnounced = false
@@ -977,6 +979,7 @@ final class WorkoutSession {
         hrAlertTracker = HRAlertTracker()
         hrTargetPosition = 0
         hrEstimator = HREstimator()
+        completedPauseIntervals = []
         lastMoveDistance = 0
         lastMoveClimb = 0
         estimatedBPM = nil
@@ -1057,6 +1060,13 @@ final class WorkoutSession {
         startClock()
     }
 
+    /// Total pause time from all completed pauses that ended at or before `time`.
+    private func pausedSecondsBefore(_ time: Date) -> TimeInterval {
+        completedPauseIntervals
+            .filter { $0.end <= time }
+            .reduce(0) { $0 + $1.end.timeIntervalSince($1.start) }
+    }
+
     /// Real readings a FIGHT Logger kept while the phone was out of range: they fill the gaps,
     /// count like any other reading, and replace the estimates for the same stretch.
     private func mergeLoggerReadings(_ readings: [LoggerProtocol.Reading]) {
@@ -1065,7 +1075,7 @@ final class WorkoutSession {
         guard !fill.isEmpty else { return }
         let p = profile
         for r in fill {
-            let elapsed = max(0, r.time.timeIntervalSince(start) - pausedTotal)
+            let elapsed = max(0, r.time.timeIntervalSince(start) - pausedSecondsBefore(r.time))
             samples.append(HeartRatePoint(timestamp: r.time, elapsedSeconds: elapsed, bpm: r.bpm, rrIntervalsMs: []))
             sumBPM += r.bpm
             maxBPMSeen = max(maxBPMSeen, r.bpm)
@@ -1214,6 +1224,7 @@ final class WorkoutSession {
         pausedForCall = false
         pausedAt = nil
         audio.onInterruptionBegan = nil
+        ble?.onLoggerReadings = nil
         run.holdDistance = false
         UIApplication.shared.isIdleTimerDisabled = false
         headMotion.stop()
@@ -1463,7 +1474,7 @@ final class WorkoutSession {
         let before = currentPhaseTarget - phaseElapsed
         phaseElapsed += dt
         let after = currentPhaseTarget - phaseElapsed
-        let warningsOn = coachCfg.masterEnabled
+        let warningsOn = coachCfg.masterEnabled && profile.encouragement
 
         if !isRestPeriod {
             if before > 30 && after <= 30 && warningsOn && coachCfg.announceRoundWarnings && workDurationSeconds >= 90 {
@@ -1763,7 +1774,10 @@ final class WorkoutSession {
     func resume() {
         guard isRecording, isPaused else { return }
         let now = Date()
-        if let at = pausedAt { pausedTotal += now.timeIntervalSince(at) }
+        if let at = pausedAt {
+            completedPauseIntervals.append((start: at, end: now))
+            pausedTotal += now.timeIntervalSince(at)
+        }
         pausedAt = nil
         isPaused = false
         pausedForCall = false

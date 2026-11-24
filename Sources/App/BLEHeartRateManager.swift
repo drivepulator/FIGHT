@@ -358,7 +358,6 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
             } else if service.uuid == deviceInfoServiceUUID {
                 peripheral.discoverCharacteristics([manufacturerUUID, modelUUID], for: service)
             } else if service.uuid == CBUUID(string: LoggerProtocol.serviceUUID) {
-                isLogger = true
                 peripheral.discoverCharacteristics([CBUUID(string: LoggerProtocol.controlUUID),
                                                     CBUUID(string: LoggerProtocol.dataUUID),
                                                     CBUUID(string: LoggerProtocol.statusUUID)], for: service)

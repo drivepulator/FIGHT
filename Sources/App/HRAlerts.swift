@@ -69,5 +69,6 @@ struct HRAlertTracker {
     mutating func reset() {
         outSince = nil
         direction = 0
+        lastAlert = -.infinity
     }
 }

@@ -63,6 +63,19 @@ final class HRAlertTests: XCTestCase {
         XCTAssertEqual(a.update(bpm: 120, target: t, at: 110, allowLow: true), -1)
     }
 
+    func testResetClearsAlertCooldown() {
+        let t = HRTarget(low: 128, high: 142, label: "")
+        var a = HRAlertTracker()
+        // Alert fires at second 20.
+        _ = a.update(bpm: 150, target: t, at: 0, allowLow: true)
+        XCTAssertEqual(a.update(bpm: 150, target: t, at: 20, allowLow: true), 1)
+        // New round at second 30: reset must clear the 90 s cooldown.
+        a.reset()
+        _ = a.update(bpm: 150, target: t, at: 30, allowLow: true)
+        XCTAssertEqual(a.update(bpm: 150, target: t, at: 50, allowLow: true), 1,
+                       "first alert in the next round fires normally after reset")
+    }
+
     func testNoLowAlertWhenNotAllowed() {
         let t = HRTarget(low: 128, high: 142, label: "")
         var a = HRAlertTracker()
