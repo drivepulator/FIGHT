@@ -299,7 +299,7 @@ struct BreathingTrainerView: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 16) {
             Image(systemName: "wind")
-                .font(.system(size: 48))
+                .font(.largeTitle)
                 .foregroundStyle(.teal)
                 .frame(maxWidth: .infinity)
                 .accessibilityHidden(true)
