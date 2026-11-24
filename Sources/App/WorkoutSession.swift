@@ -389,6 +389,28 @@ final class WorkoutSession {
             syncFromProfile()
             restoreLastSetup()
             recoverableDraft = loadDraft()
+            retryPendingHealthSave()
+        }
+    }
+
+    /// Re-attempts a Health save that persisted across a launch (e.g. app was killed before it fired).
+    private func retryPendingHealthSave() {
+        guard let idStr = UserDefaults.standard.string(forKey: Self.pendingHealthSaveKey),
+              let id = UUID(uuidString: idStr),
+              let store, let health, health.autoSaveEnabled else { return }
+        if health.savedWorkoutIDs.contains(id) {
+            UserDefaults.standard.removeObject(forKey: Self.pendingHealthSaveKey)
+            return
+        }
+        guard let workout = store.workouts.first(where: { $0.id == id }) else {
+            UserDefaults.standard.removeObject(forKey: Self.pendingHealthSaveKey)
+            return
+        }
+        let samples = store.resolvedSamples(for: workout)
+        let route = store.loadRoute(for: id)
+        Task {
+            await health.save(workout: workout, samples: samples, route: route)
+            UserDefaults.standard.removeObject(forKey: Self.pendingHealthSaveKey)
         }
     }
 
@@ -1298,7 +1320,14 @@ final class WorkoutSession {
             let sensor = ble?.sensorInfo
             let hkSamples = saved.samples
             let route = runResult?.route ?? []
-            pendingHealthSave = { Task { await health.save(workout: saved, samples: hkSamples, sensor: sensor, route: route) } }
+            // Persist the ID so the next launch can retry if the app is killed before the save fires.
+            UserDefaults.standard.set(saved.id.uuidString, forKey: Self.pendingHealthSaveKey)
+            pendingHealthSave = {
+                Task {
+                    await health.save(workout: saved, samples: hkSamples, sensor: sensor, route: route)
+                    UserDefaults.standard.removeObject(forKey: Self.pendingHealthSaveKey)
+                }
+            }
         }
 
         speakDebrief(saved, history: store.workouts, profile: current)
@@ -1312,6 +1341,7 @@ final class WorkoutSession {
 
     /// Apple Health copy of the session just finished, sent when its summary closes.
     @ObservationIgnored private var pendingHealthSave: (() -> Void)?
+    private static let pendingHealthSaveKey = "fight_pending_health_save_id_v1"
 
     /// Send the finished session to Apple Health (summary closed, app backgrounded, or a new session).
     func flushPendingHealthSave() {
