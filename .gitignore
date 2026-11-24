@@ -22,3 +22,7 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Local dev instructions (keep off public repo)
+CLAUDE.md
+CLAUDE.local.md
