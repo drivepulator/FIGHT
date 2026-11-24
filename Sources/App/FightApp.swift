@@ -37,6 +37,7 @@ struct FightApp: App {
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active {
                     workoutStore.flushPendingSaves()
+                    session.saveDraftNow()
                     // Leaving the app: don't risk losing the Health copy.
                     if phase == .background { session.flushPendingHealthSave() }
                 }

@@ -95,6 +95,8 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     private var watchdog: Timer?
     private var hasHeartRateService = false
     private let lastDeviceUUIDKey = "fight_last_device_uuid_v1"
+    private var scanTimeoutTask: Task<Void, Never>?
+    static let scanTimeoutSeconds: Double = 45
 
     // Standard Bluetooth SIG UUIDs
     nonisolated private let hrServiceUUID = CBUUID(string: "180D")
@@ -141,6 +143,12 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
         connectionError = nil
         isScanning = true
         statusMessage = "Scanning for heart rate monitors…"
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(BLEHeartRateManager.scanTimeoutSeconds))
+            guard let self, self.isScanning else { return }
+            self.stopScanning()
+        }
 
         // Sensors already connected to iOS (or another app) don't advertise.
         for p in centralManager.retrieveConnectedPeripherals(withServices: [hrServiceUUID]) {
@@ -153,6 +161,8 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     }
 
     func stopScanning() {
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = nil
         centralManager.stopScan()
         isScanning = false
         if !isConnected && !isConnecting {
