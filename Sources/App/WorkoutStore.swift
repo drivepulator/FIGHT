@@ -185,7 +185,6 @@ final class WorkoutStore: ObservableObject {
         loadProfilesFromDisk()
         loadWorkouts()
         loadExternalGhosts()
-        runLosslessAutoCompression()
         refreshGhostCache()
         loadReadiness()
         loadWeighIns()
@@ -193,6 +192,8 @@ final class WorkoutStore: ObservableObject {
         loadSoreness()
         // After everything is loaded, so clean-up never saves a half-loaded list.
         purgeOldTrash()
+        // Run after the first frame so compression never blocks the launch watchdog.
+        Task { self.runLosslessAutoCompression() }
     }
 
     /// Moves internal directories from Documents to Application Support (one-time, idempotent).
