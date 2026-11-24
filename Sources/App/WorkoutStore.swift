@@ -136,8 +136,15 @@ final class WorkoutStore: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
+    /// Internal storage (not user-accessible via Files app). All data except exports lives here.
+    var internalDirectory: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     var profilesDirectory: URL {
-        let dir = documentsDirectory.appendingPathComponent("Profiles", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("Profiles", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -147,17 +154,18 @@ final class WorkoutStore: ObservableObject {
     }
 
     var workoutsDirectory: URL {
-        let dir = documentsDirectory.appendingPathComponent("Workouts", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("Workouts", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
     var archivesDirectory: URL {
-        let dir = documentsDirectory.appendingPathComponent("CompressedArchives", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("CompressedArchives", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
+    /// Exports stay in Documents so the user can share files from the Files app.
     var exportsDirectory: URL {
         let dir = documentsDirectory.appendingPathComponent("Exports", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -165,13 +173,15 @@ final class WorkoutStore: ObservableObject {
     }
 
     var ghostsDirectory: URL {
-        let dir = documentsDirectory.appendingPathComponent("GhostOpponents", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("GhostOpponents", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
     init() {
         self.activeProfileID = UUID()
+        // Move any data left in Documents from before this release into Application Support.
+        migrateToApplicationSupport()
         loadProfilesFromDisk()
         loadWorkouts()
         loadExternalGhosts()
@@ -183,6 +193,21 @@ final class WorkoutStore: ObservableObject {
         loadSoreness()
         // After everything is loaded, so clean-up never saves a half-loaded list.
         purgeOldTrash()
+    }
+
+    /// Moves internal directories from Documents to Application Support (one-time, idempotent).
+    private func migrateToApplicationSupport() {
+        let fm = FileManager.default
+        let old = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let subdirs = ["Profiles", "Workouts", "CompressedArchives", "GhostOpponents",
+                       "Routes", "Readiness", "Plans", "WeightCut", "Body", "Drafts"]
+        for name in subdirs {
+            let src = old.appendingPathComponent(name)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            let dst = internalDirectory.appendingPathComponent(name)
+            guard !fm.fileExists(atPath: dst.path) else { continue }
+            try? fm.moveItem(at: src, to: dst)
+        }
     }
 
     private struct ProfileContainer: Codable {
@@ -543,7 +568,7 @@ final class WorkoutStore: ObservableObject {
     // MARK: Run routes (compressed, one file per run)
 
     private var routesDirectory: URL {
-        let dir = documentsDirectory.appendingPathComponent("Routes", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("Routes", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -783,7 +808,7 @@ final class WorkoutStore: ObservableObject {
     // MARK: - Readiness checks
 
     var readinessFileURL: URL {
-        let dir = documentsDirectory.appendingPathComponent("Readiness", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("Readiness", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("readiness_checks.json")
     }
@@ -825,7 +850,7 @@ final class WorkoutStore: ObservableObject {
     // MARK: - Training plans
 
     var plansFileURL: URL {
-        let dir = documentsDirectory.appendingPathComponent("Plans", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("Plans", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("plans.json")
     }
@@ -876,7 +901,7 @@ final class WorkoutStore: ObservableObject {
     // MARK: - Weigh-ins
 
     var weighInsFileURL: URL {
-        let dir = documentsDirectory.appendingPathComponent("WeightCut", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("WeightCut", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("weigh_ins.json")
     }
@@ -926,7 +951,7 @@ final class WorkoutStore: ObservableObject {
     @Published var photoVersion = 0
 
     private func fighterPhotoURL(_ id: UUID) -> URL {
-        let dir = documentsDirectory.appendingPathComponent("Body", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("Body", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("fighter-photo-\(id.uuidString).jpg")
     }
@@ -952,7 +977,7 @@ final class WorkoutStore: ObservableObject {
     // MARK: - Soreness log
 
     private var sorenessFileURL: URL {
-        let dir = documentsDirectory.appendingPathComponent("Body", isDirectory: true)
+        let dir = internalDirectory.appendingPathComponent("Body", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("soreness.json")
     }
