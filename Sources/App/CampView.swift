@@ -173,7 +173,7 @@ struct CampView: View {
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 40))
+                    .font(.largeTitle)
                     .foregroundStyle(.orange)
                     .accessibilityHidden(true)
                 Text("Plan your fight camp")

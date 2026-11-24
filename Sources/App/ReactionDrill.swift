@@ -210,6 +210,7 @@ struct ReactionDrillView: View {
     @StateObject private var model = ReactionDrillModel()
     @State private var history: [DrillResult] = []
     @State private var saved = false
+    @ScaledMetric private var resultFontSize: CGFloat = 56
 
     var body: some View {
         NavigationStack {
@@ -242,7 +243,7 @@ struct ReactionDrillView: View {
         switch model.phase {
         case .ready:
             VStack(alignment: .leading, spacing: 14) {
-                Image(systemName: "airpodspro").font(.system(size: 44)).foregroundStyle(.teal).frame(maxWidth: .infinity)
+                Image(systemName: "airpodspro").font(.largeTitle).foregroundStyle(.teal).frame(maxWidth: .infinity)
                 Text("How fast is your defence?").font(.title2.weight(.bold))
                 Text("Put your AirPods in and stand in your stance. The coach calls slips, rolls and pulls. Move as fast as you can. Your AirPods time every reaction.")
                     .foregroundStyle(.secondary)
@@ -274,7 +275,7 @@ struct ReactionDrillView: View {
         case .done:
             VStack(spacing: 10) {
                 Text("Average reaction").font(.headline).foregroundStyle(.secondary)
-                Text(model.averageMs.map { "\($0) ms" } ?? "--").font(.system(size: 56, weight: .heavy)).monospacedDigit()
+                Text(model.averageMs.map { "\($0) ms" } ?? "--").font(.system(size: resultFontSize, weight: .heavy)).monospacedDigit()
                 if let a = model.accuracy { Text("Slips the right way: \(a)%").font(.headline) }
                 if let best = history.dropLast().map(\.averageMs).min(), let avg = model.averageMs {
                     Text(avg < best ? "New best! Previous best \(best) ms." : "Your best: \(best) ms")

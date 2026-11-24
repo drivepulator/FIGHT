@@ -80,7 +80,7 @@ private struct DoorTile: View {
     var body: some View {
         HStack(spacing: 14) {
             Image(systemName: door.icon)
-                .font(.system(size: 26, weight: .semibold))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(door.tint)
                 .frame(width: 44)
             VStack(alignment: .leading, spacing: 2) {

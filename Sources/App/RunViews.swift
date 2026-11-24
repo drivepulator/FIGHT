@@ -6,6 +6,7 @@ import MapKit
 /// Big, glanceable numbers while running. The map comes after the run.
 struct RunLiveCard: View {
     let run: RunTracker
+    @ScaledMetric private var distanceFontSize: CGFloat = 72
 
     private var unit: String { run.imperial ? "mi" : "km" }
 
@@ -22,7 +23,7 @@ struct RunLiveCard: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(RouteMath.distanceText(run.distanceM, imperial: run.imperial))
-                    .font(.system(size: 72, weight: .heavy, design: .rounded))
+                    .font(.system(size: distanceFontSize, weight: .heavy, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .lineLimit(1)

@@ -68,7 +68,7 @@ struct ReadinessCheckView: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 16) {
             Image(systemName: "heart.text.square.fill")
-                .font(.system(size: 52))
+                .font(.largeTitle)
                 .foregroundStyle(.pink)
                 .frame(maxWidth: .infinity)
                 .accessibilityHidden(true)
@@ -322,7 +322,7 @@ struct ReadinessCheckView: View {
 
             VStack(spacing: 16) {
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 48))
+                    .font(.largeTitle)
                     .foregroundStyle(.green)
                     .accessibilityHidden(true)
                 Text("Check saved").font(.title2.weight(.bold))
