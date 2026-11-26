@@ -43,6 +43,8 @@ using namespace Adafruit_LittleFS_Namespace;
 static const int8_t PAIR_RSSI = -62;
 // Readings kept in memory: one per second, about 4.4 hours.
 static const uint32_t LOG_CAPACITY = 16000;
+// Flush ring buffer to flash this often so a battery cutoff loses at most this much.
+static const uint32_t FLUSH_INTERVAL_MS = 60000;
 
 struct __attribute__((packed)) Reading {
   uint32_t uptime;   // seconds since the logger started
@@ -55,6 +57,12 @@ static uint32_t logCount = 0;
 
 static int64_t unixOffset = 0;  // unix time = uptime + offset
 static bool clockSet = false;
+
+// Flash persistence
+static const char* LOG_FILE = "/workout";
+static uint32_t lastFlushedHead = UINT32_MAX;  // forces first flush
+static uint32_t lastFlushedCount = 0;
+static uint32_t lastFlushMs = 0;
 
 // Band (we are the central)
 BLEClientService bandService(UUID16_SVC_HEART_RATE);
@@ -78,7 +86,8 @@ static uint16_t phoneConn = BLE_CONN_HANDLE_INVALID;
 // Download in progress (sent from loop(), not from the Bluetooth callback)
 static bool sending = false;
 static uint32_t sendSince = 0;   // unix seconds
-static uint32_t sendIndex = 0;   // 0..logCount
+static uint32_t sendIndex = 0;   // 0..sendCount
+static uint32_t sendCount = 0;   // snapshot of logCount at download start (race guard)
 static uint16_t sentTotal = 0;
 
 static uint8_t batteryPercent = 100;
@@ -145,6 +154,40 @@ static void forgetBand() {
   InternalFS.remove("/band");
   haveSavedBand = false;
   if (bandConn != BLE_CONN_HANDLE_INVALID) Bluefruit.disconnect(bandConn);
+}
+
+// Persist the ring buffer to flash so a sudden power loss loses at most FLUSH_INTERVAL_MS of data.
+static void flushToFlash() {
+  if (logCount == 0) return;
+  if (logCount == lastFlushedCount && logHead == lastFlushedHead) return;
+  InternalFS.remove(LOG_FILE);
+  File f(InternalFS);
+  if (!f.open(LOG_FILE, FILE_O_WRITE)) return;
+  for (uint32_t i = 0; i < logCount; i++) {
+    const Reading& r = readingAt(i);
+    f.write((const uint8_t*)&r, sizeof(Reading));
+  }
+  f.close();
+  lastFlushedCount = logCount;
+  lastFlushedHead = logHead;
+}
+
+// On boot, reload any readings saved before the last power cycle.
+static void loadFromFlash() {
+  File f(InternalFS);
+  if (!f.open(LOG_FILE, FILE_O_READ)) return;
+  logHead = 0;
+  logCount = 0;
+  Reading r;
+  while (logCount < LOG_CAPACITY) {
+    int n = f.read((uint8_t*)&r, sizeof(Reading));
+    if (n != (int)sizeof(Reading)) break;
+    readings[logCount++] = r;
+  }
+  f.close();
+  logHead = logCount % LOG_CAPACITY;
+  lastFlushedCount = logCount;
+  lastFlushedHead = logHead;
 }
 
 static void readBattery() {
@@ -231,6 +274,7 @@ static void phoneDisconnected(uint16_t conn, uint8_t reason) {
   (void)reason;
   phoneConn = BLE_CONN_HANDLE_INVALID;
   sending = false;
+  flushToFlash();  // persist before the user walks away with their phone
 }
 
 static uint32_t readU32(const uint8_t* p) {
@@ -252,6 +296,7 @@ static void controlWritten(uint16_t conn, BLECharacteristic* chr, uint8_t* data,
       if (len >= 5) {
         sendSince = readU32(data + 1);
         sendIndex = 0;
+        sendCount = logCount;  // snapshot so incoming beats don't shift the walk
         sentTotal = 0;
         sending = clockSet;
         if (!clockSet) {
@@ -267,6 +312,9 @@ static void controlWritten(uint16_t conn, BLECharacteristic* chr, uint8_t* data,
     case 0x04:
       logHead = 0;
       logCount = 0;
+      lastFlushedHead = 0;
+      lastFlushedCount = 0;
+      InternalFS.remove(LOG_FILE);
       pushStatus();
       break;
   }
@@ -284,7 +332,8 @@ static void continueSending() {
   for (int burst = 0; burst < 4 && sending; burst++) {
     uint8_t buf[242];
     uint8_t n = 0;
-    while (sendIndex < logCount && n < perPacket) {
+    uint32_t startIndex = sendIndex;
+    while (sendIndex < sendCount && n < perPacket) {
       const Reading& r = readingAt(sendIndex++);
       uint32_t t = toUnix(r.uptime);
       if (t <= sendSince) continue;
@@ -299,19 +348,14 @@ static void continueSending() {
     if (n > 0) {
       buf[0] = 0xD1;
       buf[1] = n;
-      // The phone's queue can be full for a moment: wait a little and try again.
-      bool ok = false;
-      for (int attempt = 0; attempt < 30 && !ok; attempt++) {
-        ok = loggerData.notify(phoneConn, buf, 2 + n * 5);
-        if (!ok) delay(10);
-      }
-      if (!ok) {
-        sending = false;  // the phone asks again on its next reconnect
+      // If the phone's notify queue is full, rewind and retry next loop() tick (5 ms).
+      if (!loggerData.notify(phoneConn, buf, 2 + n * 5)) {
+        sendIndex = startIndex;
         return;
       }
       sentTotal += n;
     }
-    if (sendIndex >= logCount) {
+    if (sendIndex >= sendCount) {
       uint8_t end[3] = {0xD2, (uint8_t)(sentTotal & 0xFF), (uint8_t)(sentTotal >> 8)};
       loggerData.notify(phoneConn, end, sizeof(end));
       sending = false;
@@ -337,6 +381,7 @@ void setup() {
 
   InternalFS.begin();
   loadSavedBand();
+  loadFromFlash();
 
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
   Bluefruit.configCentralBandwidth(BANDWIDTH_MAX);
@@ -418,6 +463,10 @@ void loop() {
     pushStatus();
     // A short green flash every 10 s while the band is recording; nothing otherwise.
     if (bandConn != BLE_CONN_HANDLE_INVALID) blink(LED_GREEN, 1);
+  }
+  if (now - lastFlushMs > FLUSH_INTERVAL_MS) {
+    lastFlushMs = now;
+    flushToFlash();
   }
   delay(sending ? 5 : 50);
 }
