@@ -46,10 +46,10 @@ struct LiveWorkoutView: View {
                                     .tag(0)
                                 fitPage { liveHeartPage(currentZone: currentZone, profile: profile) }
                                     .tag(1)
-                                if hasCoachPage {
-                                    fitPage { liveCoachPage }
-                                        .tag(2)
+                                fitPage {
+                                    if hasCoachPage { liveCoachPage } else { Spacer() }
                                 }
+                                .tag(2)
                                 fitPage { liveNotesPage }
                                     .tag(3)
                             }

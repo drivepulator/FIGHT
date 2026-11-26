@@ -842,13 +842,13 @@ enum AutoRounds {
             } else if let s = start {
                 below += 1
                 if below > bridge {
-                    blocks.append(s..<(i - below))
+                    blocks.append(s..<(i - below + 1))
                     start = nil
                     below = 0
                 }
             }
         }
-        if let s = start { blocks.append(s..<(on.count - 1 - below)) }
+        if let s = start { blocks.append(s..<(on.count - below)) }
         return blocks
     }
 

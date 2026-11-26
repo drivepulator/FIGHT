@@ -17,6 +17,7 @@ struct WorkoutDetailView: View {
     /// Thinned once when the session loads (not on every redraw or drag).
     @State private var chartSamples: [HeartRatePoint] = []
     @State private var rollingTrendSamples: [HeartRatePoint] = []
+    @State private var cachedReview: WorkoutReview?
 
     /// Keeps the shape of the curve with ~360 points: each bucket keeps its lowest and highest
     /// reading (in time order), so peaks and stool drops never vanish like they can with every-Nth thinning.
@@ -45,12 +46,12 @@ struct WorkoutDetailView: View {
     static func trend(_ pts: [HeartRatePoint]) -> [HeartRatePoint] {
         guard pts.count >= 8 else { return [] }
         let window = 6
-        var prefix = [0]
-        for p in pts { prefix.append(prefix.last! + p.bpm) }
+        var prefix = [Double](repeating: 0, count: pts.count + 1)
+        for (i, p) in pts.enumerated() { prefix[i + 1] = prefix[i] + Double(p.bpm) }
         return pts.indices.map { i in
             let lo = max(0, i - window), hi = min(pts.count - 1, i + window)
-            let avg = (prefix[hi + 1] - prefix[lo]) / (hi - lo + 1)
-            return HeartRatePoint(timestamp: pts[i].timestamp, elapsedSeconds: pts[i].elapsedSeconds, bpm: avg)
+            let avg = (prefix[hi + 1] - prefix[lo]) / Double(hi - lo + 1)
+            return HeartRatePoint(timestamp: pts[i].timestamp, elapsedSeconds: pts[i].elapsedSeconds, bpm: Int(avg.rounded()))
         }
     }
 
@@ -130,11 +131,7 @@ struct WorkoutDetailView: View {
                 if !workout.blockResults.isEmpty {
                     PlanResultsCard(workoutID: workout.id)
                 }
-                let review = CoachEngine.review(
-                    workout: workoutStore.workouts.first(where: { $0.id == workout.id }) ?? workout,
-                    profile: workoutStore.profile(for: workout),
-                    history: workoutStore.workouts
-                )
+                if let review = cachedReview {
                 CoachReviewCard(review: review, showItems: false)
                 if workout.hasHeartRate {
                     interactiveChartCard
@@ -174,6 +171,7 @@ struct WorkoutDetailView: View {
                         advancedMetricsGrid
                     }
                 }
+                } // if let review = cachedReview
             }
             .padding()
         }
@@ -231,6 +229,11 @@ struct WorkoutDetailView: View {
             loadedSamples = workoutStore.resolvedSamples(for: workout)
             chartSamples = Self.thin(loadedSamples)
             rollingTrendSamples = Self.trend(chartSamples)
+            cachedReview = CoachEngine.review(
+                workout: workoutStore.workouts.first(where: { $0.id == workout.id }) ?? workout,
+                profile: workoutStore.profile(for: workout),
+                history: workoutStore.workouts
+            )
         }
     }
 
