@@ -86,10 +86,14 @@ static uint16_t phoneConn = BLE_CONN_HANDLE_INVALID;
 
 // Download in progress (sent from loop(), not from the Bluetooth callback)
 static bool sending = false;
-static uint32_t sendSince = 0;   // unix seconds
-static uint32_t sendIndex = 0;   // 0..sendCount
-static uint32_t sendCount = 0;   // snapshot of logCount at download start (race guard)
+static uint32_t sendSince = 0;    // unix seconds
+static uint32_t sendIndex = 0;    // 0..sendCount
+static uint32_t sendCount = 0;    // snapshot of logCount at download start
+static uint32_t sendStart = 0;    // snapshot of ring-buffer start index at download start
 static uint16_t sentTotal = 0;
+static uint16_t txRetryCount = 0; // consecutive failed notifies; abort after threshold
+
+static bool flushRequested = false; // set from BLE callbacks; executed in loop()
 
 static uint8_t batteryPercent = 100;
 static uint32_t lastBatteryCheck = 0;
@@ -157,32 +161,52 @@ static void forgetBand() {
   if (bandConn != BLE_CONN_HANDLE_INVALID) Bluefruit.disconnect(bandConn);
 }
 
-// Persist the ring buffer to flash so a sudden power loss loses at most FLUSH_INTERVAL_MS of data.
+// File layout: 1-byte magic | 8-byte unixOffset | 1-byte clockSet | N x Reading
+// Saving unixOffset means uptime-relative timestamps survive a reboot intact.
+static const uint8_t LOG_MAGIC = 0x46;
+
 static void flushToFlash() {
   if (logCount == 0) return;
   if (logCount == lastFlushedCount && logHead == lastFlushedHead) return;
   InternalFS.remove(LOG_FILE);
   File f(InternalFS);
   if (!f.open(LOG_FILE, FILE_O_WRITE)) return;
-  for (uint32_t i = 0; i < logCount; i++) {
-    const Reading& r = readingAt(i);
-    f.write((const uint8_t*)&r, sizeof(Reading));
+  uint8_t cs = clockSet ? 1 : 0;
+  f.write(&LOG_MAGIC, 1);
+  f.write((const uint8_t*)&unixOffset, sizeof(unixOffset));
+  f.write(&cs, 1);
+  // Write in 256-reading chunks to avoid 16000 single-record calls.
+  static Reading chunk[256];
+  uint32_t written = 0;
+  while (written < logCount) {
+    uint32_t n = logCount - written;
+    if (n > 256) n = 256;
+    for (uint32_t i = 0; i < n; i++) chunk[i] = readingAt(written + i);
+    f.write((const uint8_t*)chunk, n * sizeof(Reading));
+    written += n;
   }
   f.close();
   lastFlushedCount = logCount;
   lastFlushedHead = logHead;
 }
 
-// On boot, reload any readings saved before the last power cycle.
+// On boot, reload readings and the unixOffset saved before the last power cycle.
 static void loadFromFlash() {
   File f(InternalFS);
   if (!f.open(LOG_FILE, FILE_O_READ)) return;
+  uint8_t magic = 0;
+  int64_t savedOffset = 0;
+  uint8_t cs = 0;
+  if (f.read(&magic, 1) != 1 || magic != LOG_MAGIC) { f.close(); return; }
+  if (f.read((uint8_t*)&savedOffset, sizeof(savedOffset)) != (int)sizeof(savedOffset)) { f.close(); return; }
+  if (f.read(&cs, 1) != 1) { f.close(); return; }
+  unixOffset = savedOffset;
+  clockSet = (cs == 1);
   logHead = 0;
   logCount = 0;
   Reading r;
   while (logCount < LOG_CAPACITY) {
-    int n = f.read((uint8_t*)&r, sizeof(Reading));
-    if (n != (int)sizeof(Reading)) break;
+    if (f.read((uint8_t*)&r, sizeof(Reading)) != (int)sizeof(Reading)) break;
     readings[logCount++] = r;
   }
   f.close();
@@ -275,7 +299,7 @@ static void phoneDisconnected(uint16_t conn, uint8_t reason) {
   (void)reason;
   phoneConn = BLE_CONN_HANDLE_INVALID;
   sending = false;
-  flushToFlash();  // persist before the user walks away with their phone
+  flushRequested = true;  // flush in loop(); never block flash I/O inside a BLE callback
 }
 
 static uint32_t readU32(const uint8_t* p) {
@@ -297,8 +321,10 @@ static void controlWritten(uint16_t conn, BLECharacteristic* chr, uint8_t* data,
       if (len >= 5) {
         sendSince = readU32(data + 1);
         sendIndex = 0;
-        sendCount = logCount;  // snapshot so incoming beats don't shift the walk
+        sendCount = logCount;
+        sendStart = (logHead + LOG_CAPACITY - logCount) % LOG_CAPACITY;
         sentTotal = 0;
+        txRetryCount = 0;
         sending = clockSet;
         if (!clockSet) {
           uint8_t end[3] = {0xD2, 0, 0};
@@ -336,7 +362,8 @@ static void continueSending() {
     uint8_t n = 0;
     uint32_t startIndex = sendIndex;
     while (sendIndex < sendCount && n < perPacket) {
-      const Reading& r = readingAt(sendIndex++);
+      // Use snapshotted sendStart so incoming beats can't shift the walk.
+      const Reading& r = readings[(sendStart + sendIndex++) % LOG_CAPACITY];
       uint32_t t = toUnix(r.uptime);
       if (t <= sendSince) continue;
       uint8_t* p = buf + 2 + n * 5;
@@ -350,16 +377,19 @@ static void continueSending() {
     if (n > 0) {
       buf[0] = 0xD1;
       buf[1] = n;
-      // If the phone's notify queue is full, rewind and retry next loop() tick (5 ms).
       if (!loggerData.notify(phoneConn, buf, 2 + n * 5)) {
         sendIndex = startIndex;
+        // Abort if the phone is stalled (out of range but not disconnected).
+        if (++txRetryCount > 100) { sending = false; }
         return;
       }
+      txRetryCount = 0;
       sentTotal += n;
     }
     if (sendIndex >= sendCount) {
       uint8_t end[3] = {0xD2, (uint8_t)(sentTotal & 0xFF), (uint8_t)(sentTotal >> 8)};
-      loggerData.notify(phoneConn, end, sizeof(end));
+      // Retry the end-of-download marker next tick if the queue is momentarily full.
+      if (!loggerData.notify(phoneConn, end, sizeof(end))) return;
       sending = false;
     }
   }
@@ -380,12 +410,6 @@ void setup() {
   pinMode(VBAT_ENABLE, OUTPUT);
   digitalWrite(VBAT_ENABLE, LOW);  // keep low: enables the battery reading safely
 #endif
-
-  // 8-second watchdog: recovers from a SoftDevice lockup without needing a battery pull.
-  nrf_wdt_behaviour_set(NRF_WDT, NRF_WDT_BEHAVIOUR_RUN_SLEEP_HALT);
-  nrf_wdt_reload_value_set(NRF_WDT, 8 * 32768);  // 8 s at 32 kHz LFCLK
-  nrf_wdt_reload_request_enable(NRF_WDT, NRF_WDT_RR0);
-  nrf_wdt_task_trigger(NRF_WDT, NRF_WDT_TASK_START);
 
   InternalFS.begin();
   loadSavedBand();
@@ -456,6 +480,12 @@ void setup() {
   Bluefruit.Advertising.start(0);
 
   blink(LED_BLUE, 2);
+
+  // Start watchdog last: LittleFS init or loadFromFlash() can be slow on first boot.
+  nrf_wdt_behaviour_set(NRF_WDT, NRF_WDT_BEHAVIOUR_RUN_SLEEP_HALT);
+  nrf_wdt_reload_value_set(NRF_WDT, 8 * 32768);  // 8 s at 32 kHz LFCLK
+  nrf_wdt_reload_request_enable(NRF_WDT, NRF_WDT_RR0);
+  nrf_wdt_task_trigger(NRF_WDT, NRF_WDT_TASK_START);
 }
 
 void loop() {
@@ -473,8 +503,9 @@ void loop() {
     // A short green flash every 10 s while the band is recording; nothing otherwise.
     if (bandConn != BLE_CONN_HANDLE_INVALID) blink(LED_GREEN, 1);
   }
-  if (now - lastFlushMs > FLUSH_INTERVAL_MS) {
+  if (flushRequested || now - lastFlushMs > FLUSH_INTERVAL_MS) {
     lastFlushMs = now;
+    flushRequested = false;
     flushToFlash();
   }
   delay(sending ? 5 : 50);
