@@ -171,7 +171,7 @@ static void forgetBand() {
 static const uint8_t LOG_MAGIC = 0x46;
 
 static void flushToFlash() {
-  if (logCount == 0) return;
+  if (logCount == 0 || !clockSet) return;
   if (logCount == lastFlushedCount && logHead == lastFlushedHead) return;
   InternalFS.remove(LOG_FILE);
   File f(InternalFS);
