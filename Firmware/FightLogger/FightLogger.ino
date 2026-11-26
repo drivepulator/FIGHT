@@ -94,6 +94,7 @@ static uint16_t sentTotal = 0;
 static uint16_t txRetryCount = 0; // consecutive failed notifies; abort after threshold
 
 static bool flushRequested = false; // set from BLE callbacks; executed in loop()
+static bool clearRequested = false;
 
 static uint8_t batteryPercent = 100;
 static uint32_t lastBatteryCheck = 0;
@@ -134,7 +135,11 @@ static const Reading& readingAt(uint32_t i) {
   return readings[(start + i) % LOG_CAPACITY];
 }
 
-static uint32_t toUnix(uint32_t uptime) { return (uint32_t)(unixOffset + (int64_t)uptime); }
+// If uptime looks like a Unix epoch (> 1 billion seconds), it was already converted
+// at load time and is returned as-is; otherwise apply the current boot's offset.
+static uint32_t toUnix(uint32_t uptime) {
+  return uptime > 1000000000u ? uptime : (uint32_t)(unixOffset + (int64_t)uptime);
+}
 
 static void loadSavedBand() {
   File f(InternalFS);
@@ -207,6 +212,8 @@ static void loadFromFlash() {
   Reading r;
   while (logCount < LOG_CAPACITY) {
     if (f.read((uint8_t*)&r, sizeof(Reading)) != (int)sizeof(Reading)) break;
+    // Convert uptime → absolute unix so a future 0x01 clock update can't shift them.
+    r.uptime = (uint32_t)(savedOffset + (int64_t)r.uptime);
     readings[logCount++] = r;
   }
   f.close();
@@ -342,7 +349,7 @@ static void controlWritten(uint16_t conn, BLECharacteristic* chr, uint8_t* data,
       logCount = 0;
       lastFlushedHead = 0;
       lastFlushedCount = 0;
-      InternalFS.remove(LOG_FILE);
+      clearRequested = true;  // InternalFS.remove() runs in loop(), not here
       pushStatus();
       break;
   }
@@ -503,7 +510,10 @@ void loop() {
     // A short green flash every 10 s while the band is recording; nothing otherwise.
     if (bandConn != BLE_CONN_HANDLE_INVALID) blink(LED_GREEN, 1);
   }
-  if (flushRequested || now - lastFlushMs > FLUSH_INTERVAL_MS) {
+  if (clearRequested) {
+    clearRequested = false;
+    InternalFS.remove(LOG_FILE);
+  } else if (flushRequested || now - lastFlushMs > FLUSH_INTERVAL_MS) {
     lastFlushMs = now;
     flushRequested = false;
     flushToFlash();
