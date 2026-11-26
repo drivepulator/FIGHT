@@ -24,6 +24,7 @@
 #include <bluefruit.h>
 #include <Adafruit_LittleFS.h>
 #include <InternalFileSystem.h>
+#include <nrf_wdt.h>
 
 using namespace Adafruit_LittleFS_Namespace;
 
@@ -310,6 +311,7 @@ static void controlWritten(uint16_t conn, BLECharacteristic* chr, uint8_t* data,
       pushStatus();
       break;
     case 0x04:
+      sending = false;  // abort any in-progress download before wiping
       logHead = 0;
       logCount = 0;
       lastFlushedHead = 0;
@@ -378,6 +380,12 @@ void setup() {
   pinMode(VBAT_ENABLE, OUTPUT);
   digitalWrite(VBAT_ENABLE, LOW);  // keep low: enables the battery reading safely
 #endif
+
+  // 8-second watchdog: recovers from a SoftDevice lockup without needing a battery pull.
+  nrf_wdt_behaviour_set(NRF_WDT, NRF_WDT_BEHAVIOUR_RUN_SLEEP_HALT);
+  nrf_wdt_reload_value_set(NRF_WDT, 8 * 32768);  // 8 s at 32 kHz LFCLK
+  nrf_wdt_reload_request_enable(NRF_WDT, NRF_WDT_RR0);
+  nrf_wdt_task_trigger(NRF_WDT, NRF_WDT_TASK_START);
 
   InternalFS.begin();
   loadSavedBand();
@@ -451,6 +459,7 @@ void setup() {
 }
 
 void loop() {
+  nrf_wdt_reload_request_set(NRF_WDT, NRF_WDT_RR0);  // feed watchdog
   continueSending();
 
   uint32_t now = millis();
