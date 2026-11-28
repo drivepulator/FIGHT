@@ -158,7 +158,19 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
         centralManager.scanForPeripherals(withServices: nil, options: [
             CBCentralManagerScanOptionAllowDuplicatesKey: true
         ])
+
+        // An open-ended scan of every nearby device (with duplicates) drains the battery if the
+        // picker is left open or the sheet is dismissed oddly. Stop after a while; Scan restarts it.
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.scanTimeoutSeconds * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.isScanning else { return }
+            self.stopScanning()
+        }
     }
+
+    static let scanTimeoutSeconds: Double = 45
+    private var scanTimeoutTask: Task<Void, Never>?
 
     func stopScanning() {
         scanTimeoutTask?.cancel()
